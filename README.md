@@ -1,0 +1,23 @@
+# BCS Outbound Board
+
+Office-TV dashboard of this week's outbound activity per rep, pulled from HubSpot every 15 minutes (Mon–Fri, ~6am–7pm MT) by GitHub Actions and published to GitHub Pages. The page reloads itself every 5 minutes.
+
+## Metrics
+| Column | Definition |
+|---|---|
+| Dials per day | Calls owned by the rep with direction ≠ Inbound, bucketed Mon–Fri in Mountain time. Week resets Monday 12:00 AM MT. |
+| Pace target | 60 dials/day × business days elapsed (today prorated across 8am–5pm). Green ≥100%, amber ≥75%, red below. |
+| Talk time | Sum of `hs_call_duration` on calls with outcome **Connected**. |
+| Connect rate | Calls tagged Connected **and** lasting 2–15 min ÷ dials. |
+| Meetings booked | Meetings created this week by the rep, booked ahead of their start time, excluding titles containing interview / round / role discussion / training / test / hold: / internal / 1:1, and auto-logged Zoom/Teams records. |
+
+## Setup
+1. Repo secret `HUBSPOT_TOKEN` = HubSpot private app token (scopes: `crm.objects.contacts.read`, `crm.objects.owners.read`).
+2. Settings → Pages → Source: **GitHub Actions**.
+3. Actions → *Build outbound board* → **Run workflow** to publish immediately.
+
+## Changing the roster
+Edit `REPS` (HubSpot owner ID → name) at the top of `scripts/build.py`. Find owner IDs in HubSpot under Settings → Users & Teams.
+
+## On the TV
+Open the Pages URL in the TV browser, full screen. Turn off the TV's screensaver / auto-sleep. A red bar appears at the bottom if data is >45 min old during business hours.
