@@ -70,7 +70,24 @@ def fetch(token, week_start_utc):
                       [owners, {"propertyName": "hs_createdate", "operator": "GTE", "value": iso}],
                       ["hubspot_owner_id", "hs_createdate", "hs_meeting_start_time",
                        "hs_meeting_title", "hs_meeting_source"])
-    return calls, meetings
+    # Pipeline + inbound routing. A missing scope shouldn't take the whole board down.
+    def safe(obj, filters, props):
+        try:
+            return search(token, obj, filters, props)
+        except requests.HTTPError as e:
+            print(f"WARN: {obj} query failed ({e.response.status_code}) — column shows '—'", file=sys.stderr)
+            return None
+    monday_date_ms = str(int(datetime(week_start_utc.astimezone(TZ).year, week_start_utc.astimezone(TZ).month,
+                                      week_start_utc.astimezone(TZ).day, tzinfo=timezone.utc).timestamp() * 1000))
+    deals = safe("deals", [owners, {"propertyName": "createdate", "operator": "GTE", "value": iso}],
+                 ["hubspot_owner_id", "createdate", "amount", "dealname"])
+    sqls = safe("contacts", [owners, {"propertyName": "hs_v2_date_entered_salesqualifiedlead",
+                                      "operator": "GTE", "value": iso}],
+                ["hubspot_owner_id", "hs_v2_date_entered_salesqualifiedlead"])
+    freemiums = safe("contacts", [owners, {"propertyName": "freemium_sign_up_date",
+                                           "operator": "GTE", "value": monday_date_ms}],
+                     ["hubspot_owner_id", "freemium_sign_up_date"])
+    return calls, meetings, deals, sqls, freemiums
 
 
 # ---------------------------------------------------------------- math
@@ -94,9 +111,12 @@ def is_prospect_meeting(m):
     return bool(start and created and start > created)  # booked ahead, not logged after
 
 
-def compute(calls, meetings, monday, now_local):
+def compute(calls, meetings, deals, sqls, freemiums, monday, now_local):
     rows = {oid: {"name": n, "days": [0] * 5, "dials": 0, "talk_ms": 0,
-                  "connects": 0, "tagged": 0, "meetings": 0} for oid, n in REPS.items()}
+                  "connects": 0, "tagged": 0, "meetings": 0,
+                  "deals": None if deals is None else 0, "deal_amt": 0.0,
+                  "sqls": None if sqls is None else 0,
+                  "freemiums": None if freemiums is None else 0} for oid, n in REPS.items()}
     for c in calls:
         r = rows.get(c.get("hubspot_owner_id"))
         t = ts(c.get("hs_timestamp"))
@@ -116,6 +136,16 @@ def compute(calls, meetings, monday, now_local):
         r = rows.get(m.get("hubspot_owner_id"))
         if r and is_prospect_meeting(m):
             r["meetings"] += 1
+    for d in deals or []:
+        r = rows.get(d.get("hubspot_owner_id"))
+        if r:
+            r["deals"] += 1
+            r["deal_amt"] += float(d.get("amount") or 0)
+    for key, items in (("sqls", sqls), ("freemiums", freemiums)):
+        for c in items or []:
+            r = rows.get(c.get("hubspot_owner_id"))
+            if r:
+                r[key] += 1
     if now_local.weekday() >= 5:
         biz_days = 5.0
     else:  # full days so far + share of today's 8am–5pm window
@@ -130,6 +160,19 @@ def pace_class(actual, target):
         return "ok"
     p = actual / target
     return "good" if p >= 1 else "warn" if p >= 0.75 else "bad"
+
+
+def money(v):
+    return f"${v/1000:.1f}K" if v >= 1000 else f"${v:,.0f}"
+
+
+def num(v):
+    return "—" if v is None else str(v)
+
+
+def tot(rows, k):
+    vals = [r[k] for r in rows]
+    return None if any(v is None for v in vals) else sum(vals)
 
 
 def hm(ms):
@@ -161,6 +204,9 @@ def render(rows, biz_days, monday, now_local):
   <div class="metric"><b>{hm(r['talk_ms'])}</b><small>talk time</small></div>
   <div class="metric"><b>{pct}%</b><small>{r['connects']} real connect{'' if r['connects'] == 1 else 's'}</small></div>
   <div class="metric {pace_class(r['meetings'], mtg_target)}"><b>{r['meetings']}</b><small>of {MEETINGS_PER_WEEK} / wk</small></div>
+  <div class="metric pipe"><b>{num(r['deals'])}</b><small>{money(r['deal_amt']) if r['deals'] else 'no new deals'}</small></div>
+  <div class="metric inb"><b>{num(r['sqls'])}</b><small>SQLs</small></div>
+  <div class="metric inb"><b>{num(r['freemiums'])}</b><small>freemiums</small></div>
 </div>""")
 
     tot_d = sum(r["dials"] for r in rows)
@@ -179,7 +225,11 @@ def render(rows, biz_days, monday, now_local):
                .replace("{{TOT_DIALS}}", str(tot_d))
                .replace("{{TOT_TALK}}", hm(tot_t))
                .replace("{{TOT_PCT}}", f"{round(100 * tot_c / tot_d) if tot_d else 0}%")
-               .replace("{{TOT_MTG}}", str(tot_m)))
+               .replace("{{TOT_MTG}}", str(tot_m))
+               .replace("{{TOT_DEALS}}", num(tot(rows, "deals")))
+               .replace("{{TOT_DEAL_AMT}}", money(sum(r["deal_amt"] for r in rows)))
+               .replace("{{TOT_SQL}}", num(tot(rows, "sqls")))
+               .replace("{{TOT_FREE}}", num(tot(rows, "freemiums"))))
 
 
 def main():
@@ -188,18 +238,19 @@ def main():
     if os.environ.get("FIXTURE"):
         data = json.loads(Path(os.environ["FIXTURE"]).read_text())
         calls, meetings = data["calls"], data["meetings"]
+        deals, sqls, freemiums = data.get("deals"), data.get("sqls"), data.get("freemiums")
     else:
         token = os.environ.get("HUBSPOT_TOKEN")
         if not token:
             sys.exit("HUBSPOT_TOKEN not set")
-        calls, meetings = fetch(token, monday.astimezone(timezone.utc))
-    rows, biz_days = compute(calls, meetings, monday, now_local)
+        calls, meetings, deals, sqls, freemiums = fetch(token, monday.astimezone(timezone.utc))
+    rows, biz_days = compute(calls, meetings, deals, sqls, freemiums, monday, now_local)
     out = Path("dist")
     out.mkdir(exist_ok=True)
     (out / "index.html").write_text(render(rows, biz_days, monday, now_local))
     (out / ".nojekyll").write_text("")
     print(json.dumps({"calls": len(calls), "meetings": len(meetings),
-                      "rows": [{k: r[k] for k in ("name", "dials", "connects", "talk_ms", "meetings")} for r in rows]},
+                      "rows": [{k: r[k] for k in ("name", "dials", "connects", "talk_ms", "meetings", "deals", "sqls", "freemiums")} for r in rows]},
                      indent=1))
 
 

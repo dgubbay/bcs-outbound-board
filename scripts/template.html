@@ -18,7 +18,7 @@
   h1 span{color:var(--pink)}
   .meta{font-size:2vh;color:var(--mute)}
   .meta b{color:var(--teal);font-weight:700}
-  .grid,.row{display:grid;grid-template-columns:15% 39% 15% 15% 16%;align-items:center}
+  .grid,.row{display:grid;grid-template-columns:12% 30% 9.5% 9.5% 9.5% 10% 9.5% 10%;align-items:center}
   .head{font-size:1.7vh;color:var(--mute);text-transform:uppercase;letter-spacing:.12em;padding:0 1.4vw}
   .head div:not(:first-child){text-align:center}
   .rows{flex:1;display:flex;flex-direction:column;gap:1.2vh}
@@ -42,6 +42,10 @@
   .totals{background:transparent;border:.25vh solid var(--line);border-left:.6vh solid var(--teal);flex:0 0 9vh}
   .totals .name{font-size:2.6vh;color:var(--teal)}
   .row.totals b{font-size:4vh}
+  .head .hpipe{color:var(--pink)} .head .hinb{color:var(--teal)}
+  .row .pipe{border-left:.2vh solid var(--line);height:70%;justify-content:center}
+  .row .inb b{color:var(--teal)}
+  .name{font-size:3vh}
   footer{font-size:1.5vh;color:var(--mute);display:flex;justify-content:space-between}
   #stale{display:none;position:fixed;inset:auto 0 0 0;background:var(--bad);color:#fff;
     text-align:center;font-size:2.2vh;font-weight:700;padding:1vh}
@@ -52,7 +56,7 @@
   <h1><span>BCS</span> Outbound Board</h1>
   <div class="meta">{{WEEK}} · updated <b>{{UPDATED}}</b> MT</div>
 </header>
-<div class="grid head"><div>Rep</div><div>Dials per day · week total</div><div>Talk time</div><div>Connect rate</div><div>Meetings booked</div></div>
+<div class="grid head"><div>Rep</div><div>Dials per day · week total</div><div>Talk time</div><div>Connect rate</div><div>Meetings booked</div><div class="hpipe">New deals</div><div class="hinb">SQLs routed</div><div class="hinb">Freemiums routed</div></div>
 <div class="rows">
 {{ROWS}}
   <div class="row totals">
@@ -61,11 +65,14 @@
     <div class="metric"><b>{{TOT_TALK}}</b><small>talk time</small></div>
     <div class="metric"><b>{{TOT_PCT}}</b><small>connect rate</small></div>
     <div class="metric"><b>{{TOT_MTG}}</b><small>meetings</small></div>
+    <div class="metric pipe"><b>{{TOT_DEALS}}</b><small>{{TOT_DEAL_AMT}}</small></div>
+    <div class="metric inb"><b>{{TOT_SQL}}</b><small>SQLs</small></div>
+    <div class="metric inb"><b>{{TOT_FREE}}</b><small>freemiums</small></div>
   </div>
 </div>
 <footer>
-  <div>Dials = outbound calls · Connect = Connected call lasting 2–15 min · Talk time = Connected call minutes · Meetings = prospect meetings booked this week</div>
-  <div>Target: 60 dials/day · 4 meetings/wk</div>
+  <div>Connect = Connected call 2–15 min · Talk time = Connected minutes · Deals = created this week · SQLs = entered SQL this week · Freemiums = signed up this week</div>
+  <div>Target 60 dials/day · 4 mtgs/wk</div>
 </footer>
 <div id="stale">Board data is more than 45 minutes old — check the GitHub Action</div>
 <script>
