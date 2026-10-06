@@ -21,3 +21,9 @@ Edit `REPS` (HubSpot owner ID → name) at the top of `scripts/build.py`. Find o
 
 ## On the TV
 Open the Pages URL in the TV browser, full screen. Turn off the TV's screensaver / auto-sleep. A red bar appears at the bottom if data is >45 min old during business hours.
+
+| New deals | Deals (any pipeline) owned by the rep with create date this week; count + total amount. |
+| SQLs routed | Contacts owned by the rep whose "Date entered Sales Qualified Lead" is this week. |
+| Freemiums routed | Contacts owned by the rep whose Freemium Sign Up Date is this week. |
+
+Service key scopes needed: `crm.objects.contacts.read`, `crm.objects.owners.read`, `crm.objects.deals.read`. If a scope is missing that column shows "—" instead of breaking the board.
