@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="300">
+<title>BCS Outbound Board</title>
+<style>
+  :root{--bg:#161041;--panel:#211a5c;--line:#2f2775;--ink:#fff;--mute:#a9a3d6;
+        --pink:#ED1F82;--purple:#6B4FA0;--teal:#00B7D1;--yellow:#FDE14B;
+        --good:#3DDC84;--warn:#FDE14B;--bad:#FF4D5E}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg);color:var(--ink);
+    font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;overflow:hidden}
+  body{display:flex;flex-direction:column;padding:2.2vh 2.4vw;gap:1.6vh}
+  header{display:flex;align-items:baseline;justify-content:space-between}
+  h1{font-size:3.6vh;font-weight:800;letter-spacing:.02em}
+  h1 span{color:var(--pink)}
+  .meta{font-size:2vh;color:var(--mute)}
+  .meta b{color:var(--teal);font-weight:700}
+  .grid,.row{display:grid;grid-template-columns:15% 39% 15% 15% 16%;align-items:center}
+  .head{font-size:1.7vh;color:var(--mute);text-transform:uppercase;letter-spacing:.12em;padding:0 1.4vw}
+  .head div:not(:first-child){text-align:center}
+  .rows{flex:1;display:flex;flex-direction:column;gap:1.2vh}
+  .row{flex:1;background:var(--panel);border-radius:1.4vh;padding:0 1.4vw;border-left:.6vh solid var(--purple)}
+  .name{font-size:3.4vh;font-weight:700;line-height:1.1}
+  .dials{display:flex;align-items:center;gap:1.4vw;height:100%;padding:1.2vh 0}
+  .bars{flex:1;display:flex;gap:.6vw;height:100%;align-items:flex-end}
+  .bar{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
+  .bar i{display:block;width:100%;min-height:.4vh;background:var(--purple);border-radius:.5vh .5vh 0 0}
+  .bar.today i{background:var(--pink)}
+  .bar.future i{background:transparent}
+  .bar .v{font-size:2vh;font-weight:700;margin-bottom:.3vh}
+  .bar .d{font-size:1.6vh;color:var(--mute);margin-top:.4vh}
+  .bar.today .d{color:var(--pink);font-weight:700}
+  .total,.metric{text-align:center;display:flex;flex-direction:column;align-items:center}
+  .total{min-width:9vw;padding:.8vh .8vw;border-radius:1vh}
+  .row b{font-size:5.6vh;font-weight:800;line-height:1}
+  .row .total b{font-size:6vh}
+  small{font-size:1.6vh;color:var(--mute);margin-top:.6vh}
+  .good b{color:var(--good)} .warn b{color:var(--warn)} .bad b{color:var(--bad)}
+  .totals{background:transparent;border:.25vh solid var(--line);border-left:.6vh solid var(--teal);flex:0 0 9vh}
+  .totals .name{font-size:2.6vh;color:var(--teal)}
+  .row.totals b{font-size:4vh}
+  footer{font-size:1.5vh;color:var(--mute);display:flex;justify-content:space-between}
+  #stale{display:none;position:fixed;inset:auto 0 0 0;background:var(--bad);color:#fff;
+    text-align:center;font-size:2.2vh;font-weight:700;padding:1vh}
+</style>
+</head>
+<body>
+<header>
+  <h1><span>BCS</span> Outbound Board</h1>
+  <div class="meta">{{WEEK}} · updated <b>{{UPDATED}}</b> MT</div>
+</header>
+<div class="grid head"><div>Rep</div><div>Dials per day · week total</div><div>Talk time</div><div>Connect rate</div><div>Meetings booked</div></div>
+<div class="rows">
+{{ROWS}}
+  <div class="row totals">
+    <div class="name">TEAM</div>
+    <div class="metric"><b>{{TOT_DIALS}}</b><small>dials</small></div>
+    <div class="metric"><b>{{TOT_TALK}}</b><small>talk time</small></div>
+    <div class="metric"><b>{{TOT_PCT}}</b><small>connect rate</small></div>
+    <div class="metric"><b>{{TOT_MTG}}</b><small>meetings</small></div>
+  </div>
+</div>
+<footer>
+  <div>Dials = outbound calls · Connect = Connected call lasting 2–15 min · Talk time = Connected call minutes · Meetings = prospect meetings booked this week</div>
+  <div>Target: 60 dials/day · 4 meetings/wk</div>
+</footer>
+<div id="stale">Board data is more than 45 minutes old — check the GitHub Action</div>
+<script>
+  (function(){var gen={{GEN}}*1000,now=new Date(),age=(now-gen)/60000;
+   var mt=new Date(now.toLocaleString("en-US",{timeZone:"America/Denver"}));
+   var biz=mt.getDay()>=1&&mt.getDay()<=5&&mt.getHours()>=8&&mt.getHours()<18;
+   if(biz&&age>45)document.getElementById("stale").style.display="block";})();
+</script>
+</body>
+</html>
