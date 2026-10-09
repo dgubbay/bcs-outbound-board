@@ -99,6 +99,20 @@
   .ptotals{flex:0 0 11vh;background:transparent;border:.25vh solid var(--line);border-left:.6vh solid var(--teal)}
   .ptotals .name{color:var(--teal);font-size:2.6vh}
   .ptotals .pc b{font-size:3vh}
+  .pc.hot small{color:rgba(22,16,65,.85);font-weight:600}
+  /* new deals page */
+  .ndgrid{flex:1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1.2vw;min-height:0}
+  .ndcol{display:flex;flex-direction:column;gap:1vh;min-height:0}
+  .ndh{display:flex;align-items:baseline;gap:.8vw;padding:0 .4vw .8vh;border-bottom:.3vh solid var(--purple)}
+  .ndh span{flex:1;min-width:0;font-size:2.6vh;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ndh b{font-size:4.4vh;font-weight:800;color:var(--teal);line-height:1}
+  .ndh small{margin:0;font-size:2vh;font-weight:700;color:var(--ink)}
+  .ndlist{display:flex;flex-direction:column;gap:.8vh;min-height:0;overflow:hidden}
+  .nd{background:var(--panel);border-radius:1vh;padding:1vh .9vw;border-left:.7vh solid var(--purple)}
+  .ndn{font-size:2.2vh;font-weight:700;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .nda{display:flex;align-items:center;gap:.7vw;margin-top:.5vh}
+  .nda b{font-size:2.8vh;font-weight:800}
+  .nda em,footer em{color:#161041}
   #stale{display:none;position:fixed;inset:auto 0 0 0;background:var(--bad);color:#fff;
     text-align:center;font-size:2.2vh;font-weight:700;padding:1vh}
 </style>

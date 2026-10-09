@@ -55,6 +55,38 @@ STAGES = [
     ("Delayed", {"1299512469"}),
 ]
 EXPANSION_PIPELINE = "866294330"
+STAGE_RGB = {                       # hottest (closest to signature) → coolest
+    "Contract Review": (255, 77, 94),
+    "Decision Making": (255, 118, 64),
+    "Proposal Sent": (255, 156, 52),
+    "Demo": (254, 192, 60),
+    "Qualified": (253, 225, 75),
+    "Delayed": (140, 134, 180),
+    "Won": (61, 220, 132),
+    "Lost": (140, 134, 180),
+}
+CLOSED_STAGES = {
+    "Won": {"242932c5-7c92-4aea-92ab-d2bbab06d462", "1296150580", "27199892"},
+    "Lost": {"25636d46-96b1-49d3-b3cc-b031632ef786", "3810ebed-c181-442b-a564-01c1f7d53bb7", "1296150581"},
+}
+SLIDE_SECONDS_NEWDEALS = 20
+NEW_DEALS_DAYS = 7
+NEW_DEALS_PER_REP = 9
+
+
+def stage_label(stage_id):
+    for lbl, ids in STAGES:
+        if stage_id in ids:
+            return lbl
+    for lbl, ids in CLOSED_STAGES.items():
+        if stage_id in ids:
+            return lbl
+    return "Other"
+
+
+def rgb(lbl, a=1.0):
+    r, g, b = STAGE_RGB.get(lbl, (169, 163, 214))
+    return f"rgba({r},{g},{b},{a})"
 CARDS_PER_STAGE = 6
 STALE_DAYS = 14
 
@@ -107,6 +139,38 @@ def deal_createdates(token, ids):
         for d in r.json().get("results", []):
             out[str(d["id"])] = d["properties"].get("createdate")
     return out
+
+
+def open_deal_ids(token, ids):
+    """Subset of deal ids that are still open (not won/lost)."""
+    out = set()
+    ids = list(dict.fromkeys(ids))
+    for i in range(0, len(ids), 100):
+        r = requests.post(f"{API}/crm/v3/objects/deals/batch/read",
+                          json={"properties": ["hs_is_closed"], "inputs": [{"id": x} for x in ids[i:i + 100]]},
+                          headers={"Authorization": f"Bearer {token}"}, timeout=30)
+        r.raise_for_status()
+        for d in r.json().get("results", []):
+            if (d["properties"].get("hs_is_closed") or "false") != "true":
+                out.add(str(d["id"]))
+    return out
+
+
+def calls_on_live_deals(token, calls):
+    """Ids of calls whose contact has an open deal — that's deal work, not outbound prospecting."""
+    ids = [c["hs_object_id"] for c in calls if c.get("hs_object_id")]
+    if not ids:
+        return []
+    try:
+        c2ct = assoc(token, "calls", "contacts", ids)
+        contacts = {x for v in c2ct.values() for x in v}
+        ct2d = assoc(token, "contacts", "deals", contacts) if contacts else {}
+        live = open_deal_ids(token, {d for v in ct2d.values() for d in v})
+    except requests.HTTPError as e:
+        print(f"WARN: live-deal call filter unavailable ({e.response.status_code})", file=sys.stderr)
+        return None
+    live_contacts = {ct for ct, ds in ct2d.items() if any(d in live for d in ds)}
+    return [cid for cid, cts in c2ct.items() if any(ct in live_contacts for ct in cts)]
 
 
 NEW_TYPES = {"Discovery Demo"}                                   # meeting-type fallback when nothing is linked
@@ -171,7 +235,7 @@ def fetch(token, since_local):
                            ["hubspot_owner_id", "hs_createdate", "hs_meeting_start_time",
                             "hs_meeting_title", "hs_meeting_source", "hs_activity_type"]),
         "deals": safe("deals", [owners, {"propertyName": "createdate", "operator": "GTE", "value": iso}],
-                      ["hubspot_owner_id", "createdate", "amount", "dealname"]),
+                      ["hubspot_owner_id", "createdate", "amount", "dealname", "dealstage", "pipeline"]),
         "sqls": safe("contacts", [owners, {"propertyName": "hs_v2_date_entered_salesqualifiedlead",
                                            "operator": "GTE", "value": iso}],
                      ["hubspot_owner_id", "hs_v2_date_entered_salesqualifiedlead"]),
@@ -221,19 +285,23 @@ def business_days(start: date, now_local):
 
 def compute(data, start: date, buckets, bucket_of):
     mclass = data.get("meeting_class")
+    skip_calls = set(data.get("excluded_calls") or [])
     """Per-rep stats for records on/after `start`. `bucket_of(day)` → bar index or None."""
     def keep(day):
         return day is not None and day >= start
 
     nones = {k: data.get(k) is None for k in ("deals", "sqls", "freemiums")}
     rows = {oid: {"name": n, "bars": [0] * buckets, "dials": 0, "talk_ms": 0, "connects": 0,
-                  "meetings": 0, "mtg_existing": 0, "mtg_unlinked": 0, "deal_amt": 0.0,
+                  "meetings": 0, "mtg_existing": 0, "mtg_unlinked": 0, "deal_amt": 0.0, "deal_calls": 0,
                   "deals": None if nones["deals"] else 0,
                   "sqls": None if nones["sqls"] else 0,
                   "freemiums": None if nones["freemiums"] else 0} for oid, n in REPS.items()}
     for c in data["calls"]:
         r, day = rows.get(c.get("hubspot_owner_id")), local_day(c.get("hs_timestamp"))
         if not r or not keep(day) or c.get("hs_call_direction") == "INBOUND":
+            continue
+        if c.get("hs_object_id") in skip_calls:
+            r["deal_calls"] += 1
             continue
         b = bucket_of(day)
         if b is not None:
@@ -311,7 +379,7 @@ def mtg_note(r, base):
     return base + ("<br>" + " · ".join(extra) if extra else "")
 
 
-def render_board(rows, *, classified=True, key, label, dur, title, period, labels, current_idx, dial_target, mtg_target,
+def render_board(rows, *, classified=True, filtered=True, key, label, dur, title, period, labels, current_idx, dial_target, mtg_target,
                  mtg_label, updated):
     peak = max([1] + [v for r in rows for v in r["bars"]])
     trs = []
@@ -356,7 +424,7 @@ def render_board(rows, *, classified=True, key, label, dur, title, period, label
 </div>
 <footer>
   <div>Connect = Connected call 2–15 min · {'Prospect mtg = booked with a contact/company that had no deal yet' if classified else 'Prospect-vs-deal meeting split needs deals + companies read access'} · Deals created · SQLs & freemiums by owner</div>
-  <div>Target 60 dials/day · 4 mtgs/wk</div>
+  <div>{f"Excludes {plural(sum(r['deal_calls'] for r in rows), 'call')} to contacts on open deals" if filtered else "Target 60 dials/day · 4 mtgs/wk"}</div>
 </footer>
 </section>"""
 
@@ -401,16 +469,20 @@ def render_pipeline_quarter(deals, *, key, label, qs, qe, qlabel, today, include
 
     peak = max([1.0] + [sum(amt(d) for d in c) for _, cells, _, _ in rows for lbl, c in cells.items() if lbl != "Delayed"])
 
-    def cell(ds, cls="", heat=True):
+    def cell(ds, cls="", heat=True, stage=None):
         v = sum(amt(d) for d in ds)
-        alpha = round(0.12 + 0.6 * v / peak, 2) if heat and v else 0
-        style = f' style="background:rgba(107,79,160,{alpha})"' if alpha else ""
+        alpha = 1 if heat and v and stage else 0   # solid stage color: red (contract) → yellow (qualified)
+        style = f' style="background:{rgb(stage, alpha)};color:#161041"' if alpha else ""
+        if stage and not alpha and ds:
+            style = f' style="color:{rgb(stage)}"'
+        cls += " hot" if alpha else ""
         return (f'<div class="pc {cls}"{style}><b>{money(v) if ds else "—"}</b>'
                 f'<small>{plural(len(ds), "deal") if ds else ""}</small></div>')
 
     cols = [lbl for lbl, _ in open_stages] + ["Delayed"]
     extra_head = '<div class="hod">Overdue<br><span>dated before {}</span></div>'.format(qlabel.split()[0]) if include_overdue else ""
-    hdr = ('<div class="pgrid phead"><div>Rep</div>' + "".join(f"<div>{c}</div>" for c in cols) +
+    hdr = ('<div class="pgrid phead"><div>Rep</div>' +
+           "".join(f'<div style="color:{rgb(c)}">{c}</div>' for c in cols) +
            '<div class="htot">Total</div><div class="htot">Weighted</div>' + extra_head + "</div>")
     body, team = [], {c: [] for c in cols}
     team_active, team_overdue = [], []
@@ -419,20 +491,53 @@ def render_pipeline_quarter(deals, *, key, label, qs, qe, qlabel, today, include
             team[c] += cells[c]
         team_active += active; team_overdue += overdue
         body.append('<div class="pgrid prow"><div class="name">' + html.escape(name) + "</div>" +
-                    "".join(cell(cells[c], "dly" if c == "Delayed" else "", c != "Delayed") for c in cols) +
+                    "".join(cell(cells[c], "dly" if c == "Delayed" else "", c != "Delayed", c) for c in cols) +
                     cell(active, "tot", False) +
                     f'<div class="pc tot w"><b>{money(sum(amt(d) * prob(d) for d in active)) if active else "—"}</b><small>{"by stage odds" if active else ""}</small></div>' +
                     (cell(overdue, "od", False) if include_overdue else "") + "</div>")
     body.append('<div class="pgrid prow ptotals"><div class="name">TEAM</div>' +
-                "".join(cell(team[c], "dly" if c == "Delayed" else "", False) for c in cols) +
+                "".join(cell(team[c], "dly" if c == "Delayed" else "", False, c) for c in cols) +
                 cell(team_active, "tot", False) +
                 f'<div class="pc tot w"><b>{money(sum(amt(d) * prob(d) for d in team_active)) if team_active else "—"}</b><small>{"by stage odds" if team_active else ""}</small></div>' +
                 (cell(team_overdue, "od", False) if include_overdue else "") + "</div>")
     note = ("Overdue = close date passed before this quarter — re-date or close · " if include_overdue else "")
     foot = (f'<footer><div>{note}Total & weighted exclude Delayed · weighted = amount × HubSpot stage probability · '
-            f'Sales + Expansion pipelines</div><div>Shading = $ in stage</div></footer>')
+            f'Sales + Expansion pipelines</div><div>Red = closest to signature → yellow = earliest</div></footer>')
     grid_cls = "pgrid-wrap od-on" if include_overdue else "pgrid-wrap"
     return tag + head + f'<div class="{grid_cls}">' + hdr + '<div class="prows">' + "".join(body) + "</div></div>" + foot + "</section>"
+
+
+def render_new_deals(deals, now_local, updated):
+    since = now_local - timedelta(days=NEW_DEALS_DAYS)
+    head = f'''<header><h1><span>BCS</span> New Deals · last {NEW_DEALS_DAYS} days</h1>
+  <div class="meta">created {since.strftime("%b %-d")} – {now_local.strftime("%b %-d")} · updated <b>{updated}</b> MT</div></header>'''
+    tag = f'<section class="slide" data-dur="{SLIDE_SECONDS_NEWDEALS}" data-key="newdeals" data-label="New deals">'
+    if deals is None:
+        return tag + head + '<div class="empty"><b>Deals unavailable</b><small>The HubSpot key needs deals read access.</small></div></section>'
+    amt = lambda d: float(d.get("amount") or 0)
+    recent = [d for d in deals if ts(d.get("createdate")) and ts(d.get("createdate")) >= since]
+    cols, team_n, team_v = [], 0, 0.0
+    for oid, name in REPS.items():
+        mine = sorted([d for d in recent if d.get("hubspot_owner_id") == oid], key=lambda d: -amt(d))
+        v = sum(amt(d) for d in mine)
+        team_n += len(mine); team_v += v
+        items = []
+        for d in mine[:NEW_DEALS_PER_REP]:
+            lbl = stage_label(d.get("dealstage"))
+            items.append(f'''<div class="nd" style="border-left-color:{rgb(lbl)}">
+  <div class="ndn">{html.escape((d.get("dealname") or "Untitled").strip())}</div>
+  <div class="nda"><b>{money(amt(d)) if amt(d) else "no amount"}</b><em style="background:{rgb(lbl)}">{lbl}</em></div></div>''')
+        if len(mine) > NEW_DEALS_PER_REP:
+            rest = mine[NEW_DEALS_PER_REP:]
+            items.append(f'<div class="more">+{len(rest)} more · {money(sum(amt(d) for d in rest))}</div>')
+        cols.append(f'''<div class="ndcol"><div class="ndh"><span>{html.escape(name)}</span>
+  <b>{len(mine)}</b><small>{money(v) if mine else "no new deals"}</small></div>
+  <div class="ndlist">{"".join(items) or '<div class="none">—</div>'}</div></div>''')
+    legend = " ".join(f'<em style="background:{rgb(l)}">{l}</em>' for l in
+                      ["Qualified", "Demo", "Proposal Sent", "Decision Making", "Contract Review"])
+    foot = (f'<footer><div>Team: {plural(team_n, "new deal")} · {money(team_v)} · current stage shown · {legend}</div>'
+            f'<div>Rolling {NEW_DEALS_DAYS} days</div></footer>')
+    return tag + head + f'<div class="ndgrid">{"".join(cols)}</div>' + foot + "</section>"
 
 
 # ---------------------------------------------------------------- main
@@ -446,8 +551,9 @@ def build(data, now_local):
                         lambda d: (d - monday).days if 0 <= (d - monday).days < 5 else None)
     wk_days = 5.0 if today.weekday() >= 5 else business_days(monday, now_local)
     classified = data.get("meeting_class") is not None
+    filtered = data.get("excluded_calls") is not None
     weekly = render_board(
-        week_rows, classified=classified, key="board", label="This week", dur=SLIDE_SECONDS_BOARD, title="Outbound Board",
+        week_rows, classified=classified, filtered=filtered, key="board", label="This week", dur=SLIDE_SECONDS_BOARD, title="Outbound Board",
         period=f"Week of {monday.strftime('%b %-d')}", labels=["M", "T", "W", "T", "F"],
         current_idx=today.weekday() if today.weekday() < 5 else None,
         dial_target=round(DIALS_PER_DAY * wk_days), mtg_target=MEETINGS_PER_WEEK * wk_days / 5,
@@ -463,7 +569,7 @@ def build(data, now_local):
     d30 = business_days(start, now_local)
     m30 = MEETINGS_PER_WEEK * d30 / 5
     rolling = render_board(
-        r30, classified=classified, key="30d", label="30 days", dur=SLIDE_SECONDS_30D, title="30-Day Outbound Board",
+        r30, classified=classified, filtered=filtered, key="30d", label="30 days", dur=SLIDE_SECONDS_30D, title="30-Day Outbound Board",
         period=f"{start.strftime('%b %-d')} – {today.strftime('%b %-d')} · bars by week",
         labels=week_labels, current_idx=n_weeks - 1,
         dial_target=round(DIALS_PER_DAY * d30), mtg_target=m30,
@@ -476,10 +582,11 @@ def build(data, now_local):
             render_pipeline_quarter(data.get("open_deals"), key="nextq", label=f"{nqn} pipeline", qs=nqs, qe=nqe,
                                     qlabel=f"{nqn} {nqs.year}", today=today, include_overdue=False, updated=updated))
     tpl = Path(__file__).with_name("template.html").read_text()
-    page = (tpl.replace("{{SLIDES}}", weekly + rolling + reps)
+    newdeals = render_new_deals(data.get("deals"), now_local, updated)
+    page = (tpl.replace("{{SLIDES}}", weekly + rolling + newdeals + reps)
                .replace("{{GEN}}", str(int(now_local.timestamp()))))
     summary = {k: (None if v is None else len(v)) for k, v in data.items()}
-    summary["week"] = [{k: r[k] for k in ("name", "dials", "connects", "meetings", "mtg_existing", "mtg_unlinked", "deals", "sqls", "freemiums")}
+    summary["week"] = [{k: r[k] for k in ("name", "dials", "deal_calls", "connects", "meetings", "mtg_existing", "mtg_unlinked", "deals", "sqls", "freemiums")}
                        for r in week_rows]
     summary["30d"] = [{k: r[k] for k in ("name", "dials", "connects", "meetings", "deals", "sqls", "freemiums")}
                       for r in r30]
@@ -495,12 +602,14 @@ def main():
         data = json.loads(Path(os.environ["FIXTURE"]).read_text())
         data.setdefault("deals", None); data.setdefault("sqls", None)
         data.setdefault("freemiums", None); data.setdefault("open_deals", None)
-        data.setdefault("meeting_class", None)
+        data.setdefault("meeting_class", None); data.setdefault("excluded_calls", [])
     else:
         token = os.environ.get("HUBSPOT_TOKEN")
         if not token:
             sys.exit("HUBSPOT_TOKEN not set")
         data = fetch(token, since)
+        data["excluded_calls"] = calls_on_live_deals(token, [c for c in data["calls"]
+                                                             if c.get("hs_call_direction") != "INBOUND"])
         data["meeting_class"] = classify_meetings(token, [m for m in data["meetings"] if is_prospect_meeting(m)])
     page, summary = build(data, now_local)
     out = Path("dist")
