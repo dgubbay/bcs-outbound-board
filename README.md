@@ -32,4 +32,9 @@ Open the Pages URL in the TV browser, full screen. Turn off the TV's screensaver
 | SQLs routed | Contacts owned by the rep whose "Date entered Sales Qualified Lead" is this week. |
 | Freemiums routed | Contacts owned by the rep whose Freemium Sign Up Date is this week. |
 
-Service key scopes needed: `crm.objects.contacts.read`, `crm.objects.owners.read`, `crm.objects.deals.read`. If a scope is missing that column shows "—" instead of breaking the board.
+Service key scopes needed: `crm.objects.contacts.read`, `crm.objects.owners.read`, `crm.objects.deals.read`, `crm.objects.companies.read`. If a scope is missing that column shows "—" instead of breaking the board.
+
+## Prospect meetings
+The meetings column counts only meetings booked with a **brand-new prospect**: none of the meeting's associated contacts or companies had a deal (any stage) when the meeting was booked. Meetings with an existing deal show as "+N on deals"; meetings with no linked contact/company fall back to the meeting type (Discovery Demo = new) and otherwise show as "unlinked". Without deals + companies read access, the board shows all meetings instead.
+
+David Gubbay (sales manager) is intentionally not on the board.
