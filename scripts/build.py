@@ -24,12 +24,12 @@ TZ = ZoneInfo("America/Denver")
 API = "https://api.hubapi.com"
 
 # Roster (HubSpot owner ID → name). Also the order of the pipeline pages.
+# David Gubbay (14324253) is the sales manager — intentionally not on the board.
 REPS = {
     "99808543": "Wyatt Ison",
     "99960123": "Hunter Wooten",
     "99808544": "Thomas Gubbay",
     "135846867": "Rick Smith",
-    "14324253": "David Gubbay",
 }
 
 CONNECTED = "f240bbac-87c9-4f6e-bf70-924b57d47db7"
@@ -82,6 +82,70 @@ def search(token, obj, filters, props):
         time.sleep(0.25)  # search API: ~4 req/s
 
 
+def assoc(token, frm, to, ids):
+    """{from_id: [to_id, ...]} via the v4 batch associations API."""
+    out = {}
+    ids = list(dict.fromkeys(ids))
+    for i in range(0, len(ids), 1000):
+        r = requests.post(f"{API}/crm/v4/associations/{frm}/{to}/batch/read",
+                          json={"inputs": [{"id": x} for x in ids[i:i + 1000]]},
+                          headers={"Authorization": f"Bearer {token}"}, timeout=30)
+        r.raise_for_status()
+        for row in r.json().get("results", []):
+            out[str(row["from"]["id"])] = [str(t["toObjectId"]) for t in row.get("to", [])]
+    return out
+
+
+def deal_createdates(token, ids):
+    out = {}
+    ids = list(dict.fromkeys(ids))
+    for i in range(0, len(ids), 100):
+        r = requests.post(f"{API}/crm/v3/objects/deals/batch/read",
+                          json={"properties": ["createdate"], "inputs": [{"id": x} for x in ids[i:i + 100]]},
+                          headers={"Authorization": f"Bearer {token}"}, timeout=30)
+        r.raise_for_status()
+        for d in r.json().get("results", []):
+            out[str(d["id"])] = d["properties"].get("createdate")
+    return out
+
+
+NEW_TYPES = {"Discovery Demo"}                                   # meeting-type fallback when nothing is linked
+EXISTING_TYPES = {"Follow-up Demo", "Proposal Review", "Follow up Call", "Follow-up Call"}
+
+
+def classify_meetings(token, meetings):
+    """meeting id → "new" (no deal existed with that contact/company when it was booked),
+    "existing" (a deal already existed) or "unlinked" (no contact/company to check).
+    Returns None if the key lacks the deals/companies scopes."""
+    ids = [m["hs_object_id"] for m in meetings if m.get("hs_object_id")]
+    if not ids:
+        return {}
+    try:
+        m2c = assoc(token, "meetings", "contacts", ids)
+        m2co = assoc(token, "meetings", "companies", ids)
+        contacts = {c for v in m2c.values() for c in v}
+        companies = {c for v in m2co.values() for c in v}
+        c2d = assoc(token, "contacts", "deals", contacts) if contacts else {}
+        co2d = assoc(token, "companies", "deals", companies) if companies else {}
+        created = deal_createdates(token, {d for v in list(c2d.values()) + list(co2d.values()) for d in v})
+    except requests.HTTPError as e:
+        print(f"WARN: meeting classification unavailable ({e.response.status_code})", file=sys.stderr)
+        return None
+    out = {}
+    for m in meetings:
+        mid = m.get("hs_object_id")
+        cs, cos = m2c.get(mid, []), m2co.get(mid, [])
+        booked = ts(m.get("hs_createdate"))
+        if not cs and not cos:
+            t = m.get("hs_activity_type") or ""
+            out[mid] = "new" if t in NEW_TYPES else "existing" if t in EXISTING_TYPES else "unlinked"
+            continue
+        deals = {d for c in cs for d in c2d.get(c, [])} | {d for c in cos for d in co2d.get(c, [])}
+        prior = [d for d in deals if created.get(d) and booked and ts(created[d]) < booked]
+        out[mid] = "existing" if prior else "new"
+    return out
+
+
 def fetch(token, since_local):
     """Everything since `since_local` (start of the 30-day window, which always covers this week)."""
     owners = {"propertyName": "hubspot_owner_id", "operator": "IN", "values": list(REPS)}
@@ -105,7 +169,7 @@ def fetch(token, since_local):
         "meetings": search(token, "meetings",
                            [owners, {"propertyName": "hs_createdate", "operator": "GTE", "value": iso}],
                            ["hubspot_owner_id", "hs_createdate", "hs_meeting_start_time",
-                            "hs_meeting_title", "hs_meeting_source"]),
+                            "hs_meeting_title", "hs_meeting_source", "hs_activity_type"]),
         "deals": safe("deals", [owners, {"propertyName": "createdate", "operator": "GTE", "value": iso}],
                       ["hubspot_owner_id", "createdate", "amount", "dealname"]),
         "sqls": safe("contacts", [owners, {"propertyName": "hs_v2_date_entered_salesqualifiedlead",
@@ -156,13 +220,14 @@ def business_days(start: date, now_local):
 
 
 def compute(data, start: date, buckets, bucket_of):
+    mclass = data.get("meeting_class")
     """Per-rep stats for records on/after `start`. `bucket_of(day)` → bar index or None."""
     def keep(day):
         return day is not None and day >= start
 
     nones = {k: data.get(k) is None for k in ("deals", "sqls", "freemiums")}
     rows = {oid: {"name": n, "bars": [0] * buckets, "dials": 0, "talk_ms": 0, "connects": 0,
-                  "meetings": 0, "deal_amt": 0.0,
+                  "meetings": 0, "mtg_existing": 0, "mtg_unlinked": 0, "deal_amt": 0.0,
                   "deals": None if nones["deals"] else 0,
                   "sqls": None if nones["sqls"] else 0,
                   "freemiums": None if nones["freemiums"] else 0} for oid, n in REPS.items()}
@@ -182,7 +247,13 @@ def compute(data, start: date, buckets, bucket_of):
     for m in data["meetings"]:
         r = rows.get(m.get("hubspot_owner_id"))
         if r and keep(local_day(m.get("hs_createdate"))) and is_prospect_meeting(m):
-            r["meetings"] += 1
+            kind = "new" if mclass is None else mclass.get(m.get("hs_object_id"), "unlinked")
+            if kind == "new":
+                r["meetings"] += 1          # the headline number: brand-new prospect meetings only
+            elif kind == "existing":
+                r["mtg_existing"] += 1
+            else:
+                r["mtg_unlinked"] += 1
     for d in data.get("deals") or []:
         r = rows.get(d.get("hubspot_owner_id"))
         if r and keep(local_day(d.get("createdate"))):
@@ -227,7 +298,16 @@ def plural(n, word):
 
 
 # ---------------------------------------------------------------- outbound board slide
-def render_board(rows, *, key, label, dur, title, period, labels, current_idx, dial_target, mtg_target,
+def mtg_note(r, base):
+    extra = []
+    if r["mtg_existing"]:
+        extra.append(f"+{r['mtg_existing']} on deals")
+    if r["mtg_unlinked"]:
+        extra.append(f"{r['mtg_unlinked']} unlinked")
+    return base + ("<br>" + " · ".join(extra) if extra else "")
+
+
+def render_board(rows, *, classified=True, key, label, dur, title, period, labels, current_idx, dial_target, mtg_target,
                  mtg_label, updated):
     peak = max([1] + [v for r in rows for v in r["bars"]])
     trs = []
@@ -247,7 +327,7 @@ def render_board(rows, *, key, label, dur, title, period, labels, current_idx, d
     <div class="total {pace_class(r['dials'], dial_target)}"><b>{r['dials']}</b><small>pace target {dial_target}</small></div></div>
   <div class="metric"><b>{hm(r['talk_ms'])}</b><small>talk time</small></div>
   <div class="metric"><b>{pct}%</b><small>{plural(r['connects'], 'real connect')}</small></div>
-  <div class="metric {pace_class(r['meetings'], mtg_target)}"><b>{r['meetings']}</b><small>{mtg_label}</small></div>
+  <div class="metric {pace_class(r['meetings'], mtg_target)}"><b>{r['meetings']}</b><small>{mtg_note(r, mtg_label)}</small></div>
   <div class="metric pipe"><b>{num(r['deals'])}</b><small>{money(r['deal_amt']) if r['deals'] else 'no new deals'}</small></div>
   <div class="metric inb"><b>{num(r['sqls'])}</b><small>SQLs</small></div>
   <div class="metric inb"><b>{num(r['freemiums'])}</b><small>freemiums</small></div>
@@ -257,21 +337,21 @@ def render_board(rows, *, key, label, dur, title, period, labels, current_idx, d
     return f"""<section class="slide" data-dur="{dur}" data-key="{key}" data-label="{label}">
 <header><h1><span>BCS</span> {title}</h1>
   <div class="meta">{period} · updated <b>{updated}</b> MT</div></header>
-<div class="grid head"><div>Rep</div><div>Dials · total</div><div>Talk time</div><div>Connect rate</div><div>Meetings booked</div><div class="hpipe">New deals</div><div class="hinb">SQLs routed</div><div class="hinb">Freemiums routed</div></div>
+<div class="grid head"><div>Rep</div><div>Dials · total</div><div>Talk time</div><div>Connect rate</div><div>{'Prospect mtgs' if classified else 'Meetings booked'}</div><div class="hpipe">New deals</div><div class="hinb">SQLs routed</div><div class="hinb">Freemiums routed</div></div>
 <div class="rows">{''.join(trs)}
   <div class="row totals">
     <div class="name">TEAM</div>
     <div class="metric"><b>{td}</b><small>dials</small></div>
     <div class="metric"><b>{hm(sum(r['talk_ms'] for r in rows))}</b><small>talk time</small></div>
     <div class="metric"><b>{round(100 * tc / td) if td else 0}%</b><small>connect rate</small></div>
-    <div class="metric"><b>{sum(r['meetings'] for r in rows)}</b><small>meetings</small></div>
+    <div class="metric"><b>{sum(r['meetings'] for r in rows)}</b><small>{'prospect mtgs' if classified else 'meetings'}</small></div>
     <div class="metric pipe"><b>{num(tot(rows, 'deals'))}</b><small>{money(sum(r['deal_amt'] for r in rows))}</small></div>
     <div class="metric inb"><b>{num(tot(rows, 'sqls'))}</b><small>SQLs</small></div>
     <div class="metric inb"><b>{num(tot(rows, 'freemiums'))}</b><small>freemiums</small></div>
   </div>
 </div>
 <footer>
-  <div>Connect = Connected call 2–15 min · Talk time = Connected minutes · Deals = created · SQLs = entered SQL stage · Freemiums = signed up · all by owner</div>
+  <div>Connect = Connected call 2–15 min · {'Prospect mtg = booked with a contact/company that had no deal yet' if classified else 'Prospect-vs-deal meeting split needs deals + companies read access'} · Deals created · SQLs & freemiums by owner</div>
   <div>Target 60 dials/day · 4 mtgs/wk</div>
 </footer>
 </section>"""
@@ -297,7 +377,7 @@ def render_pipeline(oid, name, deals, week_row, now_local, updated):
     if not mine:
         r = week_row
         return (open_tag + head + f'''<div class="empty"><b>No open deals yet</b>
-  <small>This week: {r['dials']} dials · {r['meetings']} meetings booked · {num(r['sqls'])} SQLs · {num(r['freemiums'])} freemiums</small></div></section>''')
+  <small>This week: {r['dials']} dials · {r['meetings']} new-prospect meetings · {num(r['sqls'])} SQLs · {num(r['freemiums'])} freemiums</small></div></section>''')
 
     today = now_local.date()
     qs, qe, qlabel = quarter_bounds(today)
@@ -354,8 +434,9 @@ def build(data, now_local):
     week_rows = compute(data, monday, 5,
                         lambda d: (d - monday).days if 0 <= (d - monday).days < 5 else None)
     wk_days = 5.0 if today.weekday() >= 5 else business_days(monday, now_local)
+    classified = data.get("meeting_class") is not None
     weekly = render_board(
-        week_rows, key="board", label="This week", dur=SLIDE_SECONDS_BOARD, title="Outbound Board",
+        week_rows, classified=classified, key="board", label="This week", dur=SLIDE_SECONDS_BOARD, title="Outbound Board",
         period=f"Week of {monday.strftime('%b %-d')}", labels=["M", "T", "W", "T", "F"],
         current_idx=today.weekday() if today.weekday() < 5 else None,
         dial_target=round(DIALS_PER_DAY * wk_days), mtg_target=MEETINGS_PER_WEEK * wk_days / 5,
@@ -371,7 +452,7 @@ def build(data, now_local):
     d30 = business_days(start, now_local)
     m30 = MEETINGS_PER_WEEK * d30 / 5
     rolling = render_board(
-        r30, key="30d", label="30 days", dur=SLIDE_SECONDS_30D, title="30-Day Outbound Board",
+        r30, classified=classified, key="30d", label="30 days", dur=SLIDE_SECONDS_30D, title="30-Day Outbound Board",
         period=f"{start.strftime('%b %-d')} – {today.strftime('%b %-d')} · bars by week",
         labels=week_labels, current_idx=n_weeks - 1,
         dial_target=round(DIALS_PER_DAY * d30), mtg_target=m30,
@@ -384,7 +465,7 @@ def build(data, now_local):
     page = (tpl.replace("{{SLIDES}}", weekly + rolling + reps)
                .replace("{{GEN}}", str(int(now_local.timestamp()))))
     summary = {k: (None if v is None else len(v)) for k, v in data.items()}
-    summary["week"] = [{k: r[k] for k in ("name", "dials", "connects", "meetings", "deals", "sqls", "freemiums")}
+    summary["week"] = [{k: r[k] for k in ("name", "dials", "connects", "meetings", "mtg_existing", "mtg_unlinked", "deals", "sqls", "freemiums")}
                        for r in week_rows]
     summary["30d"] = [{k: r[k] for k in ("name", "dials", "connects", "meetings", "deals", "sqls", "freemiums")}
                       for r in r30]
@@ -400,11 +481,13 @@ def main():
         data = json.loads(Path(os.environ["FIXTURE"]).read_text())
         data.setdefault("deals", None); data.setdefault("sqls", None)
         data.setdefault("freemiums", None); data.setdefault("open_deals", None)
+        data.setdefault("meeting_class", None)
     else:
         token = os.environ.get("HUBSPOT_TOKEN")
         if not token:
             sys.exit("HUBSPOT_TOKEN not set")
         data = fetch(token, since)
+        data["meeting_class"] = classify_meetings(token, [m for m in data["meetings"] if is_prospect_meeting(m)])
     page, summary = build(data, now_local)
     out = Path("dist")
     out.mkdir(exist_ok=True)
