@@ -113,6 +113,19 @@
   .nda{display:flex;align-items:center;gap:.7vw;margin-top:.5vh}
   .nda b{font-size:2.8vh;font-weight:800}
   .nda em,footer em{color:#161041}
+  /* quota page */
+  .qrow{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,3.2fr) repeat(5,minmax(0,1fr));gap:1vw;align-items:center}
+  .qhead{font-size:1.6vh;color:var(--mute);text-transform:uppercase;letter-spacing:.1em;padding:0 1.4vw}
+  .qhead div:nth-child(n+3){text-align:center}
+  .qrows{flex:1;display:flex;flex-direction:column;gap:1.4vh}
+  .qrows .qrow{flex:1;background:var(--panel);border-radius:1.4vh;padding:1vh 1.4vw;border-left:.6vh solid var(--purple)}
+  .qrows .qrow b{font-size:4.6vh;font-weight:800;line-height:1}
+  .qbar{position:relative;height:4.4vh;background:var(--line);border-radius:1vh;overflow:visible}
+  .qbar i{display:block;height:100%;border-radius:1vh;min-width:.6vh}
+  .qbar i.good{background:var(--good)} .qbar i.warn{background:var(--warn)} .qbar i.bad{background:var(--bad)}
+  .qbar .pace{position:absolute;top:-.8vh;bottom:-.8vh;width:.4vh;background:var(--ink);border-radius:.2vh}
+  .qsub{font-size:1.7vh;color:var(--mute);margin-top:1vh}
+  .ramp{font-size:3vh;font-weight:800;color:var(--teal)}
   #stale{display:none;position:fixed;inset:auto 0 0 0;background:var(--bad);color:#fff;
     text-align:center;font-size:2.2vh;font-weight:700;padding:1vh}
 </style>

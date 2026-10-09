@@ -70,6 +70,28 @@ CLOSED_STAGES = {
     "Lost": {"25636d46-96b1-49d3-b3cc-b031632ef786", "3810ebed-c181-442b-a564-01c1f7d53bb7", "1296150581"},
 }
 SLIDE_SECONDS_NEWDEALS = 20
+SLIDE_SECONDS_QUOTA = 20
+
+# Annual quotas and the date each one starts (per David, 2026-10-09). Quarterly quota = annual ÷ 4.
+# Before a rep's start date they're ramping: no quota, the row shows closed-won and pipeline only.
+QUOTAS = {
+    "135846867": [(date(2026, 1, 1), 690_000)],      # Rick Smith
+    "99808543": [(date(2027, 1, 1), 500_000)],       # Wyatt Ison — quota starts Q1 2027
+    "99960123": [(date(2027, 1, 1), 500_000)],       # Hunter Wooten — quota starts Q1 2027
+    "99808544": [(date(2027, 4, 1), 1_000_000)],     # Thomas Gubbay — quota starts Q2 2027
+}
+
+
+def annual_quota(oid, on: date):
+    q = None
+    for start, amount in QUOTAS.get(oid, []):
+        if on >= start:
+            q = amount
+    return q
+
+
+def quota_start(oid):
+    return min((s for s, _ in QUOTAS.get(oid, [])), default=None)
 NEW_DEALS_DAYS = 7
 NEW_DEALS_PER_REP = 9
 
@@ -242,6 +264,11 @@ def fetch(token, since_local):
         "freemiums": safe("contacts", [owners, {"propertyName": "freemium_sign_up_date",
                                                 "operator": "GTE", "value": date_ms}],
                           ["hubspot_owner_id", "freemium_sign_up_date"]),
+        "won": safe("deals", [owners, {"propertyName": "hs_is_closed_won", "operator": "EQ", "value": "true"},
+                               {"propertyName": "closedate", "operator": "GTE",
+                                "value": datetime(since_local.year if since_local.month > 1 else since_local.year - 1, 1, 1,
+                                                  tzinfo=TZ).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}],
+                     ["hubspot_owner_id", "dealname", "amount", "closedate"]),
         "open_deals": safe("deals", [owners, {"propertyName": "hs_is_closed", "operator": "EQ", "value": "false"}],
                            ["hubspot_owner_id", "dealname", "amount", "dealstage", "pipeline", "closedate",
                             "notes_last_updated", "hs_deal_stage_probability"]),
@@ -507,6 +534,74 @@ def render_pipeline_quarter(deals, *, key, label, qs, qe, qlabel, today, include
     return tag + head + f'<div class="{grid_cls}">' + hdr + '<div class="prows">' + "".join(body) + "</div></div>" + foot + "</section>"
 
 
+def render_quota(won, open_deals, now_local, updated):
+    today = now_local.date()
+    qs, qe, qn = quarter_bounds(today)
+    ys, ye = date(today.year, 1, 1), date(today.year + 1, 1, 1)
+    pace = (today - qs).days / (qe - qs).days            # share of the quarter elapsed
+    head = f'''<header><h1><span>BCS</span> Quota Attainment · {qn} {today.year}</h1>
+  <div class="meta">{round(pace * 100)}% of the quarter elapsed · updated <b>{updated}</b> MT</div></header>'''
+    tag = f'<section class="slide" data-dur="{SLIDE_SECONDS_QUOTA}" data-key="quota" data-label="Quota">'
+    if won is None or open_deals is None:
+        return tag + head + '<div class="empty"><b>Quota data unavailable</b><small>The HubSpot key needs deals read access.</small></div></section>'
+    amt = lambda d: float(d.get("amount") or 0)
+    prob = lambda d: float(d.get("hs_deal_stage_probability") or 0)
+    delayed_ids = STAGES[-1][1]
+    rows = []
+    for oid, name in REPS.items():
+        w = [d for d in won if d.get("hubspot_owner_id") == oid]
+        q_won = sum(amt(d) for d in w if local_day(d.get("closedate")) and qs <= local_day(d.get("closedate")) < qe)
+        y_won = sum(amt(d) for d in w if local_day(d.get("closedate")) and ys <= local_day(d.get("closedate")) < ye)
+        q_open = [d for d in open_deals if d.get("hubspot_owner_id") == oid and d.get("dealstage") not in delayed_ids
+                  and local_day(d.get("closedate")) and local_day(d.get("closedate")) < qe]   # this quarter + overdue
+        pipe = sum(amt(d) for d in q_open)
+        weighted = sum(amt(d) * prob(d) for d in q_open)
+        annual = annual_quota(oid, qs)
+        qquota = annual / 4 if annual else None
+        rows.append(dict(name=name, oid=oid, q_won=q_won, y_won=y_won, pipe=pipe, weighted=weighted,
+                         annual=annual, qquota=qquota, ystart=annual_quota(oid, ys)))
+    rows.sort(key=lambda r: (r["qquota"] is None, -(r["q_won"] / r["qquota"] if r["qquota"] else r["q_won"])))
+
+    def pct_class(p):
+        return "good" if p >= pace else "warn" if p >= pace * 0.75 else "bad"
+
+    out = []
+    for r in rows:
+        if r["qquota"]:
+            p = r["q_won"] / r["qquota"]
+            gap = max(0.0, r["qquota"] - r["q_won"])
+            cov = (r["pipe"] / gap) if gap else None
+            fill = min(100, p * 100)
+            bar = f'''<div class="qbar"><i class="{pct_class(p)}" style="width:{fill:.1f}%"></i>
+  <span class="pace" style="left:{pace * 100:.1f}%"></span></div>
+  <div class="qsub">{money(r["q_won"])} won of {money(r["qquota"])} · pace line = where they should be today</div>'''
+            pct = f'<div class="metric {pct_class(p)}"><b>{round(p * 100)}%</b><small>of {qn} quota</small></div>'
+            gapc = f'<div class="metric"><b>{money(gap) if gap else "✓"}</b><small>{"left to close" if gap else "quota hit"}</small></div>'
+            covc = (f'<div class="metric {"good" if cov >= 3 else "warn" if cov >= 1 else "bad"}"><b>{cov:.1f}×</b>'
+                    f'<small>{money(r["pipe"])} open</small></div>') if cov is not None else '<div class="metric"><b>—</b><small>no gap</small></div>'
+            fc = r["q_won"] + r["weighted"]
+            fcc = f'<div class="metric {"good" if fc >= r["qquota"] else "warn" if fc >= .75 * r["qquota"] else "bad"}"><b>{money(fc)}</b><small>forecast · {round(100 * fc / r["qquota"])}%</small></div>'
+        else:
+            st = quota_start(r["oid"])
+            sq = f"Q{(st.month - 1) // 3 + 1} {st.year}" if st else "TBD"
+            bar = f'<div class="ramp">Ramping — quota starts {sq}</div><div class="qsub">{money(r["q_won"])} won this quarter · {money(r["pipe"])} open pipeline</div>'
+            pct = '<div class="metric"><b>—</b><small>no quota yet</small></div>'
+            gapc = f'<div class="metric"><b>{money(r["q_won"]) if r["q_won"] else "$0"}</b><small>won in {qn}</small></div>'
+            covc = f'<div class="metric"><b>{money(r["pipe"]) if r["pipe"] else "$0"}</b><small>open pipeline</small></div>'
+            fcc = f'<div class="metric"><b>{money(r["weighted"]) if r["weighted"] else "$0"}</b><small>weighted pipeline</small></div>'
+        if r["ystart"]:
+            yp = r["y_won"] / r["ystart"]
+            ycell = f'<div class="metric"><b>{round(yp * 100)}%</b><small>{today.year}: {money(r["y_won"])} of {money(r["ystart"])}</small></div>'
+        else:
+            ycell = f'<div class="metric"><b>{money(r["y_won"]) if r["y_won"] else "$0"}</b><small>won in {today.year}</small></div>'
+        out.append(f'<div class="qrow"><div class="name">{html.escape(r["name"])}</div><div class="qmain">{bar}</div>{pct}{gapc}{covc}{fcc}{ycell}</div>')
+    hdr = ('<div class="qrow qhead"><div>Rep</div><div>Closed-won vs quarter quota</div><div>Attainment</div>'
+           '<div>Gap</div><div>Pipeline coverage</div><div>Forecast</div><div>Year to date</div></div>')
+    foot = ('<footer><div>Won = closed-won amount by close date · coverage = open pipeline (this quarter + overdue, excl. Delayed) ÷ gap · '
+            'forecast = won + pipeline × stage probability</div><div>Green = at/above pace</div></footer>')
+    return tag + head + hdr + f'<div class="qrows">{"".join(out)}</div>' + foot + "</section>"
+
+
 def render_new_deals(deals, now_local, updated):
     since = now_local - timedelta(days=NEW_DEALS_DAYS)
     head = f'''<header><h1><span>BCS</span> New Deals · last {NEW_DEALS_DAYS} days</h1>
@@ -583,7 +678,8 @@ def build(data, now_local):
                                     qlabel=f"{nqn} {nqs.year}", today=today, include_overdue=False, updated=updated))
     tpl = Path(__file__).with_name("template.html").read_text()
     newdeals = render_new_deals(data.get("deals"), now_local, updated)
-    page = (tpl.replace("{{SLIDES}}", weekly + rolling + newdeals + reps)
+    quota = render_quota(data.get("won"), data.get("open_deals"), now_local, updated)
+    page = (tpl.replace("{{SLIDES}}", weekly + rolling + newdeals + quota + reps)
                .replace("{{GEN}}", str(int(now_local.timestamp()))))
     summary = {k: (None if v is None else len(v)) for k, v in data.items()}
     summary["week"] = [{k: r[k] for k in ("name", "dials", "deal_calls", "connects", "meetings", "mtg_existing", "mtg_unlinked", "deals", "sqls", "freemiums")}
@@ -603,6 +699,7 @@ def main():
         data.setdefault("deals", None); data.setdefault("sqls", None)
         data.setdefault("freemiums", None); data.setdefault("open_deals", None)
         data.setdefault("meeting_class", None); data.setdefault("excluded_calls", [])
+        data.setdefault("won", None)
     else:
         token = os.environ.get("HUBSPOT_TOKEN")
         if not token:
