@@ -1,6 +1,6 @@
 # BCS Outbound Board
 
-The TV page rotates: **Weekly Outbound Board (30s) → 30-Day Outbound Board (20s) → This-quarter pipeline (25s) → Next-quarter pipeline (25s)**. Arrow keys step through pages, space pauses. Add `#board`, `#30d`, `#thisq` or `#nextq` to the URL to pin one page.
+The TV page rotates: **Weekly Outbound Board (30s) → 30-Day Outbound Board (20s) → New Deals, rolling 7 days (20s) → This-quarter pipeline (25s) → Next-quarter pipeline (25s)**. Arrow keys step through pages, space pauses. Add `#board`, `#30d`, `#newdeals`, `#thisq` or `#nextq` to the URL to pin one page.
 
 **Pipeline pages** show every rep as a row, open deals broken out by stage (Qualified → Contract Review, plus Delayed), with total and weighted pipeline. The this-quarter page also has an Overdue column: open deals whose close date passed before the quarter started.
 
@@ -38,3 +38,12 @@ Service key scopes needed: `crm.objects.contacts.read`, `crm.objects.owners.read
 The meetings column counts only meetings booked with a **brand-new prospect**: none of the meeting's associated contacts or companies had a deal (any stage) when the meeting was booked. Meetings with an existing deal show as "+N on deals"; meetings with no linked contact/company fall back to the meeting type (Discovery Demo = new) and otherwise show as "unlinked". Without deals + companies read access, the board shows all meetings instead.
 
 David Gubbay (sales manager) is intentionally not on the board.
+
+## New Deals page
+Every deal created in the last 7 days (rolling), one column per rep: deal name, amount and current stage, largest first.
+
+## Stage colors
+Pipeline stages are colored from red (Contract Review, closest to signature) through orange to yellow (Qualified). Delayed is grey.
+
+## Calls on live deals are excluded
+Dials, connects and talk time count outbound prospecting only: a call is dropped if its contact has an open deal (any owner). The board footer shows how many calls were excluded.
