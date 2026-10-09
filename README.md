@@ -1,6 +1,6 @@
 # BCS Outbound Board
 
-The TV page rotates: **Weekly Outbound Board (30s) → 30-Day Outbound Board (20s) → New Deals, rolling 7 days (20s) → This-quarter pipeline (25s) → Next-quarter pipeline (25s)**. Arrow keys step through pages, space pauses. Add `#board`, `#30d`, `#newdeals`, `#thisq` or `#nextq` to the URL to pin one page.
+The TV page rotates: **Weekly Outbound Board (30s) → 30-Day Outbound Board (20s) → New Deals, rolling 7 days (20s) → Quota attainment (20s) → This-quarter pipeline (25s) → Next-quarter pipeline (25s)**. Arrow keys step through pages, space pauses. Add `#board`, `#30d`, `#newdeals`, `#quota`, `#thisq` or `#nextq` to the URL to pin one page.
 
 **Pipeline pages** show every rep as a row, open deals broken out by stage (Qualified → Contract Review, plus Delayed), with total and weighted pipeline. The this-quarter page also has an Overdue column: open deals whose close date passed before the quarter started.
 
@@ -47,3 +47,7 @@ Pipeline stages are colored from red (Contract Review, closest to signature) thr
 
 ## Calls on live deals are excluded
 Dials, connects and talk time count outbound prospecting only: a call is dropped if its contact has an open deal (any owner). The board footer shows how many calls were excluded.
+
+## Quota attainment
+Quotas live in `QUOTAS` at the top of `scripts/build.py` (annual amount + the date it starts; quarterly = annual ÷ 4). Current setup: Rick $690K/yr; Wyatt and Hunter $500K/yr starting Q1 2027; Thomas $1M/yr starting Q2 2027. Before a rep's start date the row shows "Ramping" with won and pipeline only.
+Each row: closed-won this quarter vs quarterly quota (bar with a white pace line for how far through the quarter we are), attainment %, gap, pipeline coverage (open deals this quarter + overdue ÷ gap), forecast (won + weighted pipeline) and year-to-date vs annual quota.
