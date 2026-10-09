@@ -426,7 +426,7 @@ def render_pipeline_quarter(deals, *, key, label, qs, qe, qlabel, today, include
     body.append('<div class="pgrid prow ptotals"><div class="name">TEAM</div>' +
                 "".join(cell(team[c], "dly" if c == "Delayed" else "", False) for c in cols) +
                 cell(team_active, "tot", False) +
-                f'<div class="pc tot w"><b>{money(sum(amt(d) * prob(d) for d in team_active)) if team_active else "—"}</b><small>by stage odds</small></div>' +
+                f'<div class="pc tot w"><b>{money(sum(amt(d) * prob(d) for d in team_active)) if team_active else "—"}</b><small>{"by stage odds" if team_active else ""}</small></div>' +
                 (cell(team_overdue, "od", False) if include_overdue else "") + "</div>")
     note = ("Overdue = close date passed before this quarter — re-date or close · " if include_overdue else "")
     foot = (f'<footer><div>{note}Total & weighted exclude Delayed · weighted = amount × HubSpot stage probability · '
