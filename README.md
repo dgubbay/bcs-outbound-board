@@ -1,8 +1,8 @@
 # BCS Outbound Board
 
-The TV page rotates: **Weekly Outbound Board (30s) → 30-Day Outbound Board (20s) → one pipeline page per rep (15s each)**. Arrow keys step through pages, space pauses. Add `#board`, `#30d`, `#rick`, etc. to the URL to pin one page.
+The TV page rotates: **Weekly Outbound Board (30s) → 30-Day Outbound Board (20s) → This-quarter pipeline (25s) → Next-quarter pipeline (25s)**. Arrow keys step through pages, space pauses. Add `#board`, `#30d`, `#thisq` or `#nextq` to the URL to pin one page.
 
-**Pipeline pages** show each rep's open deals (BCS Sales + Expansion pipelines) in stage columns, largest first, with open/weighted/this-quarter totals and flags for past-due close dates and deals with no notes in 14+ days. Delayed deals are shown dimmed and excluded from totals.
+**Pipeline pages** show every rep as a row, open deals broken out by stage (Qualified → Contract Review, plus Delayed), with total and weighted pipeline. The this-quarter page also has an Overdue column: open deals whose close date passed before the quarter started.
 
 **30-Day board** uses the same metrics over today and the previous 29 days, with weekly bars; targets scale to the business days in the window.
 
