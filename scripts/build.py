@@ -43,7 +43,7 @@ ROLLING_DAYS = 30
 
 SLIDE_SECONDS_BOARD = 30
 SLIDE_SECONDS_30D = 20
-SLIDE_SECONDS_REP = 15
+SLIDE_SECONDS_PIPE = 25
 
 # Pipeline columns, left → right. Expansion/Upsell pipeline stages fold into the equivalent column.
 STAGES = [
@@ -276,6 +276,10 @@ def pace_class(actual, target):
 
 
 def money(v):
+    if v >= 1_000_000:
+        return f"${v/1e6:.2f}M"
+    if v >= 100_000:
+        return f"${v/1000:.0f}K"
     return f"${v/1000:.1f}K" if v >= 1000 else f"${v:,.0f}"
 
 
@@ -365,63 +369,70 @@ def quarter_bounds(d):
     return start, end, f"Q{(q0 - 1) // 3 + 1}"
 
 
-def render_pipeline(oid, name, deals, week_row, now_local, updated):
-    first = name.split()[0]
-    open_tag = f'<section class="slide" data-dur="{SLIDE_SECONDS_REP}" data-key="{first.lower()}" data-label="{first}">'
-    head = f'''<header><h1><span>BCS</span> Pipeline · {html.escape(name)}</h1>
-  <div class="meta">open deals · updated <b>{updated}</b> MT</div></header>'''
+def render_pipeline_quarter(deals, *, key, label, qs, qe, qlabel, today, include_overdue, updated):
+    """One page, one row per rep, open deals closing in [qs, qe) broken out by stage.
+    The current-quarter page also carries deals whose close date is before this quarter (overdue)."""
+    head = f'''<header><h1><span>BCS</span> Pipeline · {qlabel}</h1>
+  <div class="meta">{"closing this quarter" if include_overdue else "closing next quarter"} · {qs.strftime("%b %-d")} – {(qe - timedelta(days=1)).strftime("%b %-d")} · updated <b>{updated}</b> MT</div></header>'''
+    tag = f'<section class="slide" data-dur="{SLIDE_SECONDS_PIPE}" data-key="{key}" data-label="{label}">'
     if deals is None:
-        return (open_tag + head + '<div class="empty"><b>Pipeline unavailable</b><small>The HubSpot key needs the '
-                'crm.objects.deals.read permission.</small></div></section>')
-    mine = [d for d in deals if d.get("hubspot_owner_id") == oid]
-    if not mine:
-        r = week_row
-        return (open_tag + head + f'''<div class="empty"><b>No open deals yet</b>
-  <small>This week: {r['dials']} dials · {r['meetings']} new-prospect meetings · {num(r['sqls'])} SQLs · {num(r['freemiums'])} freemiums</small></div></section>''')
-
-    today = now_local.date()
-    qs, qe, qlabel = quarter_bounds(today)
+        return tag + head + '<div class="empty"><b>Pipeline unavailable</b><small>The HubSpot key needs deals read access.</small></div></section>'
     amt = lambda d: float(d.get("amount") or 0)
     prob = lambda d: float(d.get("hs_deal_stage_probability") or 0)
     delayed_ids = STAGES[-1][1]
-    active = [d for d in mine if d.get("dealstage") not in delayed_ids]
-    in_q = [d for d in active if local_day(d.get("closedate")) and qs <= local_day(d.get("closedate")) < qe]
-    past_due = [d for d in active if local_day(d.get("closedate")) and local_day(d.get("closedate")) < today]
+    open_stages = STAGES[:-1]
 
-    kpis = f'''<div class="kpis">
-  <div class="kpi"><b>{money(sum(amt(d) for d in active))}</b><small>open pipeline · {plural(len(active), 'deal')}</small></div>
-  <div class="kpi"><b>{money(sum(amt(d) * prob(d) for d in active))}</b><small>weighted by stage</small></div>
-  <div class="kpi"><b>{money(sum(amt(d) for d in in_q))}</b><small>closing in {qlabel} · {plural(len(in_q), 'deal')}</small></div>
-  <div class="kpi {'bad' if past_due else 'good'}"><b>{len(past_due)}</b><small>past-due close dates</small></div>
-</div>'''
-    cols = []
-    for label, ids in STAGES:
-        ds = sorted([d for d in mine if d.get("dealstage") in ids], key=lambda d: -amt(d))
-        cards = []
-        for d in ds[:CARDS_PER_STAGE]:
-            cd = local_day(d.get("closedate"))
-            nl = ts(d.get("notes_last_updated"))
-            quiet = (now_local - nl).days if nl else None
-            flags, cls = [], "card"
-            if label != "Delayed" and cd and cd < today:
-                flags.append('<em class="f-bad">past due</em>'); cls += " due"
-            elif label != "Delayed" and quiet is not None and quiet >= STALE_DAYS:
-                flags.append(f'<em class="f-warn">{quiet}d quiet</em>'); cls += " quiet"
-            if d.get("pipeline") == EXPANSION_PIPELINE:
-                flags.append('<em class="f-exp">EXP</em>')
-            cards.append(f'''<div class="{cls}"><div class="dn">{html.escape((d.get("dealname") or "Untitled").strip())}</div>
-  <div class="dm"><b>{money(amt(d)) if amt(d) else "no amount"}</b><span>{cd.strftime("%b %-d") if cd else "no date"}</span>{"".join(flags)}</div></div>''')
-        more = ""
-        if len(ds) > CARDS_PER_STAGE:
-            rest = ds[CARDS_PER_STAGE:]
-            more = f'<div class="more">+{len(rest)} more · {money(sum(amt(d) for d in rest))}</div>'
-        cols.append(f'''<div class="col{' delayed' if label == 'Delayed' else ''}">
-  <div class="ch"><span>{label}</span><b>{len(ds)}</b><small>{money(sum(amt(d) for d in ds))}</small></div>
-  <div class="cards">{"".join(cards) or '<div class="none">—</div>'}{more}</div></div>''')
-    foot = (f'<footer><div>Weighted = amount × HubSpot stage probability · Delayed excluded from totals · '
-            f'<em class="f-bad">past due</em> close date passed · <em class="f-warn">quiet</em> no notes {STALE_DAYS}+ days · '
-            f'<em class="f-exp">EXP</em> expansion pipeline</div><div>Sorted by amount</div></footer>')
-    return open_tag + head + kpis + f'<div class="stages">{"".join(cols)}</div>' + foot + "</section>"
+    def bucket(d):
+        cd = local_day(d.get("closedate"))
+        if cd and qs <= cd < qe:
+            return "in"
+        if include_overdue and cd and cd < qs:
+            return "overdue"
+        return None
+
+    rows = []
+    for oid, name in REPS.items():
+        mine = [d for d in deals if d.get("hubspot_owner_id") == oid]
+        inq = [d for d in mine if bucket(d) == "in"]
+        cells = {lbl: [d for d in inq if d.get("dealstage") in ids] for lbl, ids in STAGES}
+        active = [d for d in inq if d.get("dealstage") not in delayed_ids]
+        overdue = [d for d in mine if bucket(d) == "overdue" and d.get("dealstage") not in delayed_ids]
+        rows.append((name, cells, active, overdue))
+
+    peak = max([1.0] + [sum(amt(d) for d in c) for _, cells, _, _ in rows for lbl, c in cells.items() if lbl != "Delayed"])
+
+    def cell(ds, cls="", heat=True):
+        v = sum(amt(d) for d in ds)
+        alpha = round(0.12 + 0.6 * v / peak, 2) if heat and v else 0
+        style = f' style="background:rgba(107,79,160,{alpha})"' if alpha else ""
+        return (f'<div class="pc {cls}"{style}><b>{money(v) if ds else "—"}</b>'
+                f'<small>{plural(len(ds), "deal") if ds else ""}</small></div>')
+
+    cols = [lbl for lbl, _ in open_stages] + ["Delayed"]
+    extra_head = '<div class="hod">Overdue<br><span>dated before {}</span></div>'.format(qlabel.split()[0]) if include_overdue else ""
+    hdr = ('<div class="pgrid phead"><div>Rep</div>' + "".join(f"<div>{c}</div>" for c in cols) +
+           '<div class="htot">Total</div><div class="htot">Weighted</div>' + extra_head + "</div>")
+    body, team = [], {c: [] for c in cols}
+    team_active, team_overdue = [], []
+    for name, cells, active, overdue in rows:
+        for c in cols:
+            team[c] += cells[c]
+        team_active += active; team_overdue += overdue
+        body.append('<div class="pgrid prow"><div class="name">' + html.escape(name) + "</div>" +
+                    "".join(cell(cells[c], "dly" if c == "Delayed" else "", c != "Delayed") for c in cols) +
+                    cell(active, "tot", False) +
+                    f'<div class="pc tot w"><b>{money(sum(amt(d) * prob(d) for d in active)) if active else "—"}</b><small>{"by stage odds" if active else ""}</small></div>' +
+                    (cell(overdue, "od", False) if include_overdue else "") + "</div>")
+    body.append('<div class="pgrid prow ptotals"><div class="name">TEAM</div>' +
+                "".join(cell(team[c], "dly" if c == "Delayed" else "", False) for c in cols) +
+                cell(team_active, "tot", False) +
+                f'<div class="pc tot w"><b>{money(sum(amt(d) * prob(d) for d in team_active)) if team_active else "—"}</b><small>by stage odds</small></div>' +
+                (cell(team_overdue, "od", False) if include_overdue else "") + "</div>")
+    note = ("Overdue = close date passed before this quarter — re-date or close · " if include_overdue else "")
+    foot = (f'<footer><div>{note}Total & weighted exclude Delayed · weighted = amount × HubSpot stage probability · '
+            f'Sales + Expansion pipelines</div><div>Shading = $ in stage</div></footer>')
+    grid_cls = "pgrid-wrap od-on" if include_overdue else "pgrid-wrap"
+    return tag + head + f'<div class="{grid_cls}">' + hdr + '<div class="prows">' + "".join(body) + "</div></div>" + foot + "</section>"
 
 
 # ---------------------------------------------------------------- main
@@ -458,9 +469,12 @@ def build(data, now_local):
         dial_target=round(DIALS_PER_DAY * d30), mtg_target=m30,
         mtg_label=f"target {round(m30)}", updated=updated)
 
-    by_name = {r["name"]: r for r in week_rows}
-    reps = "".join(render_pipeline(oid, n, data.get("open_deals"), by_name[n], now_local, updated)
-                   for oid, n in REPS.items())
+    qs, qe, qn = quarter_bounds(today)
+    nqs, nqe, nqn = quarter_bounds(qe)
+    reps = (render_pipeline_quarter(data.get("open_deals"), key="thisq", label=f"{qn} pipeline", qs=qs, qe=qe,
+                                    qlabel=f"{qn} {qs.year}", today=today, include_overdue=True, updated=updated) +
+            render_pipeline_quarter(data.get("open_deals"), key="nextq", label=f"{nqn} pipeline", qs=nqs, qe=nqe,
+                                    qlabel=f"{nqn} {nqs.year}", today=today, include_overdue=False, updated=updated))
     tpl = Path(__file__).with_name("template.html").read_text()
     page = (tpl.replace("{{SLIDES}}", weekly + rolling + reps)
                .replace("{{GEN}}", str(int(now_local.timestamp()))))
