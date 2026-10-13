@@ -1,6 +1,6 @@
 # BCS Outbound Board
 
-The TV page rotates: **Weekly Outbound Board (30s) → 30-Day Outbound Board (20s) → Latest deal celebration (15s) → New Deals, rolling 7 days (20s) → Closed-won celebration (20s) → Quota attainment (20s) → This-quarter pipeline (25s) → Next-quarter pipeline (25s)**. Arrow keys step through pages, space pauses. Add `#board`, `#30d`, `#newdeal`, `#newdeals`, `#wins`, `#quota`, `#thisq` or `#nextq` to the URL to pin one page.
+The TV page rotates: **Weekly Outbound Board (30s) → 30-Day Outbound Board (20s) → New opportunity (15s) → New opportunities, rolling 7 days (20s) → Closed-won celebration (20s) → Quota attainment (20s) → This-quarter pipeline (25s) → Next-quarter pipeline (25s)**. Arrow keys step through pages, space pauses. Add `#board`, `#30d`, `#newdeal`, `#newdeals`, `#wins`, `#quota`, `#thisq` or `#nextq` to the URL to pin one page.
 
 **Pipeline pages** show every rep as a row, open deals broken out by stage (Qualified → Contract Review, plus Delayed), with total and weighted pipeline. The this-quarter page also has an Overdue column: open deals whose close date passed before the quarter started.
 
@@ -52,7 +52,7 @@ Quotas live in `QUOTAS` at the top of `scripts/build.py` (annual amount + the da
 Each row: closed-won this quarter vs quarterly quota (bar with a white pace line for how far through the quarter we are), attainment %, gap, pipeline coverage (open deals this quarter + overdue ÷ gap), forecast (won + weighted pipeline) and year-to-date vs annual quota.
 
 ## Celebration pages
-**Latest deal**: the single most recently created deal by anyone on the roster: rep, deal name, amount, stage, how long ago.
+**New opportunity**: the single most recently created deal (no confetti — it is not closed yet) by anyone on the roster: rep, deal name, amount, stage, how long ago.
 **Closed won**: the most recent closed-won deal as the hero (gold, confetti), the last-30-day tally, and other recent wins underneath (or the previous three wins if it's been quiet).
 
 ## Refresh loop
