@@ -25,7 +25,10 @@ permissions:
 
 concurrency:
   group: board
-  cancel-in-progress: true
+  # A push (code change) interrupts a sleeping loop run and takes over the loop.
+  # A loop-dispatched run just queues behind its predecessor for the few seconds it needs to finish,
+  # so loop runs end as "success" instead of "cancelled".
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   plan:
