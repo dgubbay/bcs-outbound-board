@@ -728,7 +728,7 @@ def render_new_deals(deals, now_local, updated, latest=None):
             lbl = stage_label(d.get("dealstage"))
             items.append(f'''<div class="nd" style="border-left-color:{rgb(lbl)}">
   <div class="ndn">{html.escape((d.get("dealname") or "Untitled").strip())}</div>
-  <div class="nda"><b>{money(amt(d)) if amt(d) else "no amount"}</b><em style="background:{rgb(lbl)}">{lbl}</em></div></div>''')
+  <div class="nda"><b>{money(amt(d)) if amt(d) else "no amount"}</b>{f'<em style="background:{rgb(lbl)}">{lbl}</em>' if lbl != "Other" else ""}</div></div>''')
         if len(mine) > NEW_DEALS_PER_REP:
             rest = mine[NEW_DEALS_PER_REP:]
             items.append(f'<div class="more">+{len(rest)} more · {money(sum(amt(d) for d in rest))}</div>')
