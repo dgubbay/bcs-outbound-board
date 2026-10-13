@@ -24,12 +24,12 @@ TZ = ZoneInfo("America/Denver")
 API = "https://api.hubapi.com"
 
 # Roster (HubSpot owner ID → name). Also the order of the pipeline pages.
-# David Gubbay (14324253) is the sales manager — intentionally not on the board.
 REPS = {
     "99808543": "Wyatt Ison",
     "99960123": "Hunter Wooten",
     "99808544": "Thomas Gubbay",
     "135846867": "Rick Smith",
+    "14324253": "David Gubbay",
 }
 
 CONNECTED = "f240bbac-87c9-4f6e-bf70-924b57d47db7"
@@ -79,6 +79,7 @@ QUOTAS = {
     "99808543": [(date(2027, 1, 1), 500_000)],       # Wyatt Ison — quota starts Q1 2027
     "99960123": [(date(2027, 1, 1), 500_000)],       # Hunter Wooten — quota starts Q1 2027
     "99808544": [(date(2027, 4, 1), 1_000_000)],     # Thomas Gubbay — quota starts Q2 2027
+    "14324253": [(date(2026, 1, 1), 200_000)],       # David Gubbay — $200K/yr (per David, 2026-10-13)
 }
 
 
@@ -134,6 +135,18 @@ def search(token, obj, filters, props):
         if not after:
             return out
         time.sleep(0.25)  # search API: ~4 req/s
+
+
+def latest_deal(token):
+    body = {"filterGroups": [{"filters": [{"propertyName": "hubspot_owner_id", "operator": "IN", "values": list(REPS)}]}],
+            "properties": ["hubspot_owner_id", "dealname", "amount", "dealstage", "createdate", "pipeline"],
+            "sorts": [{"propertyName": "createdate", "direction": "DESCENDING"}], "limit": 1}
+    r = requests.post(f"{API}/crm/v3/objects/deals/search", json=body,
+                      headers={"Authorization": f"Bearer {token}"}, timeout=30)
+    if r.status_code >= 400:
+        return None
+    res = r.json().get("results", [])
+    return res[0]["properties"] if res else None
 
 
 def assoc(token, frm, to, ids):
@@ -602,6 +615,83 @@ def render_quota(won, open_deals, now_local, updated):
     return tag + head + hdr + f'<div class="qrows">{"".join(out)}</div>' + foot + "</section>"
 
 
+CONFETTI_COLORS = ["#ED1F82", "#00B7D1", "#FDE14B", "#6B4FA0", "#3DDC84", "#ffffff"]
+SLIDE_SECONDS_CELEBRATE = 15
+WINS_DAYS = 30
+
+
+def confetti(n=70, seed=7):
+    import random
+    rnd = random.Random(seed)
+    bits = []
+    for i in range(n):
+        bits.append(f'<i style="left:{rnd.uniform(0, 100):.1f}%;background:{CONFETTI_COLORS[i % len(CONFETTI_COLORS)]};'
+                    f'width:{rnd.uniform(.6, 1.4):.2f}vh;height:{rnd.uniform(1.2, 2.6):.2f}vh;'
+                    f'animation-duration:{rnd.uniform(3.5, 7):.2f}s;animation-delay:-{rnd.uniform(0, 7):.2f}s;'
+                    f'transform:rotate({rnd.randint(0, 360)}deg)"></i>')
+    return f'<div class="confetti">{"".join(bits)}</div>'
+
+
+def ago(t, now_local):
+    mins = int((now_local - t).total_seconds() // 60)
+    if mins < 60:
+        return f"{max(mins, 1)} min ago"
+    if mins < 24 * 60:
+        return plural(mins // 60, "hour") + " ago"
+    return plural(mins // (24 * 60), "day") + " ago"
+
+
+def render_latest_deal(d, now_local, updated):
+    tag = f'<section class="slide celebrate" data-dur="{SLIDE_SECONDS_CELEBRATE}" data-key="newdeal" data-label="Latest deal">'
+    if not d:
+        return tag + '<div class="empty"><b>No deals yet</b></div></section>'
+    rep = REPS.get(d.get("hubspot_owner_id"), "")
+    lbl = stage_label(d.get("dealstage"))
+    created = ts(d.get("createdate"))
+    amt = float(d.get("amount") or 0)
+    return tag + confetti(60, seed=11) + f'''<div class="cel">
+  <div class="kicker">New deal on the board</div>
+  <div class="who">{html.escape(rep)}</div>
+  <div class="what">{html.escape((d.get("dealname") or "Untitled").strip())}</div>
+  <div class="big">{money(amt) if amt else "Amount TBD"}</div>
+  <div class="tags">{f'<em style="background:{rgb(lbl)}">{lbl}</em>' if lbl != "Other" else ""}<span>created {ago(created, now_local) if created else ""}</span></div>
+</div>
+<footer><div>Most recently created deal on the team</div><div>updated <b>{updated}</b> MT</div></footer></section>'''
+
+
+def render_wins(won, now_local, updated):
+    tag = f'<section class="slide celebrate wins" data-dur="{SLIDE_SECONDS_CELEBRATE + 5}" data-key="wins" data-label="Closed won">'
+    if won is None:
+        return tag + '<div class="empty"><b>Wins unavailable</b><small>The HubSpot key needs deals read access.</small></div></section>'
+    amt = lambda d: float(d.get("amount") or 0)
+    wins = sorted([d for d in won if ts(d.get("closedate"))], key=lambda d: ts(d.get("closedate")), reverse=True)
+    if not wins:
+        return tag + '<div class="empty"><b>The next win goes here</b></div></section>'
+    since = now_local - timedelta(days=WINS_DAYS)
+    recent = [d for d in wins if ts(d["closedate"]) >= since]
+    hero = wins[0]
+    hero_ts = ts(hero["closedate"])
+    fresh = hero_ts >= since
+    kicker = "CLOSED WON" if fresh else "Most recent win"
+    rest = recent[1:7] if len(recent) > 1 else wins[1:4]
+    strip_label = "Also closed recently" if len(recent) > 1 else "Earlier wins"
+    strip = "".join(f'''<div class="wcard"><div class="wrep">{html.escape(REPS.get(d.get("hubspot_owner_id"), ""))}</div>
+  <div class="wname">{html.escape((d.get("dealname") or "").strip())}</div><b>{money(amt(d))}</b>
+  <span>{ts(d["closedate"]).astimezone(TZ).strftime("%b %-d")}</span></div>''' for d in rest)
+    tally = (f'{plural(len(recent), "deal")} · {money(sum(amt(d) for d in recent))} closed in the last {WINS_DAYS} days'
+             if recent else f"No closed-won deals in the last {WINS_DAYS} days — who's next?")
+    return tag + confetti(110, seed=3) + f'''<div class="cel">
+  <div class="kicker gold">{kicker}</div>
+  <div class="who">{html.escape(REPS.get(hero.get("hubspot_owner_id"), ""))}</div>
+  <div class="what">{html.escape((hero.get("dealname") or "").strip())}</div>
+  <div class="big gold">{money(amt(hero))}</div>
+  <div class="tags"><span>closed {hero_ts.astimezone(TZ).strftime("%b %-d")} · {ago(hero_ts, now_local)}</span></div>
+</div>
+<div class="tally">{tally}</div>
+<div class="wlabel">{strip_label if strip else ""}</div><div class="wstrip">{strip}</div>
+<footer><div>Closed-won deals, newest first</div><div>updated <b>{updated}</b> MT</div></footer></section>'''
+
+
 def render_new_deals(deals, now_local, updated):
     since = now_local - timedelta(days=NEW_DEALS_DAYS)
     head = f'''<header><h1><span>BCS</span> New Deals · last {NEW_DEALS_DAYS} days</h1>
@@ -679,7 +769,9 @@ def build(data, now_local):
     tpl = Path(__file__).with_name("template.html").read_text()
     newdeals = render_new_deals(data.get("deals"), now_local, updated)
     quota = render_quota(data.get("won"), data.get("open_deals"), now_local, updated)
-    page = (tpl.replace("{{SLIDES}}", weekly + rolling + newdeals + quota + reps)
+    latest = render_latest_deal(data.get("latest_deal"), now_local, updated)
+    wins = render_wins(data.get("won"), now_local, updated)
+    page = (tpl.replace("{{SLIDES}}", weekly + rolling + latest + newdeals + wins + quota + reps)
                .replace("{{GEN}}", str(int(now_local.timestamp()))))
     summary = {k: (None if v is None else len(v)) for k, v in data.items()}
     summary["week"] = [{k: r[k] for k in ("name", "dials", "deal_calls", "connects", "meetings", "mtg_existing", "mtg_unlinked", "deals", "sqls", "freemiums")}
@@ -699,12 +791,13 @@ def main():
         data.setdefault("deals", None); data.setdefault("sqls", None)
         data.setdefault("freemiums", None); data.setdefault("open_deals", None)
         data.setdefault("meeting_class", None); data.setdefault("excluded_calls", [])
-        data.setdefault("won", None)
+        data.setdefault("won", None); data.setdefault("latest_deal", None)
     else:
         token = os.environ.get("HUBSPOT_TOKEN")
         if not token:
             sys.exit("HUBSPOT_TOKEN not set")
         data = fetch(token, since)
+        data["latest_deal"] = latest_deal(token)
         data["excluded_calls"] = calls_on_live_deals(token, [c for c in data["calls"]
                                                              if c.get("hs_call_direction") != "INBOUND"])
         data["meeting_class"] = classify_meetings(token, [m for m in data["meetings"] if is_prospect_meeting(m)])
