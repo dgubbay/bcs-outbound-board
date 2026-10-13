@@ -642,21 +642,21 @@ def ago(t, now_local):
 
 
 def render_latest_deal(d, now_local, updated):
-    tag = f'<section class="slide celebrate" data-dur="{SLIDE_SECONDS_CELEBRATE}" data-key="newdeal" data-label="Latest deal">'
+    tag = f'<section class="slide spotlight" data-dur="{SLIDE_SECONDS_CELEBRATE}" data-key="newdeal" data-label="New opportunity">'
     if not d:
-        return tag + '<div class="empty"><b>No deals yet</b></div></section>'
+        return tag + '<div class="empty"><b>No opportunities yet</b></div></section>'
     rep = REPS.get(d.get("hubspot_owner_id"), "")
     lbl = stage_label(d.get("dealstage"))
     created = ts(d.get("createdate"))
     amt = float(d.get("amount") or 0)
-    return tag + confetti(60, seed=11) + f'''<div class="cel">
-  <div class="kicker">New deal on the board</div>
+    return tag + f'''<div class="cel">
+  <div class="kicker">New opportunity</div>
   <div class="who">{html.escape(rep)}</div>
   <div class="what">{html.escape((d.get("dealname") or "Untitled").strip())}</div>
   <div class="big">{money(amt) if amt else "Amount TBD"}</div>
   <div class="tags">{f'<em style="background:{rgb(lbl)}">{lbl}</em>' if lbl != "Other" else ""}<span>created {ago(created, now_local) if created else ""}</span></div>
 </div>
-<footer><div>Most recently created deal on the team</div><div>updated <b>{updated}</b> MT</div></footer></section>'''
+<footer><div>Most recently created opportunity on the team · not closed yet</div><div>updated <b>{updated}</b> MT</div></footer></section>'''
 
 
 def render_wins(won, now_local, updated):
@@ -694,9 +694,9 @@ def render_wins(won, now_local, updated):
 
 def render_new_deals(deals, now_local, updated):
     since = now_local - timedelta(days=NEW_DEALS_DAYS)
-    head = f'''<header><h1><span>BCS</span> New Deals · last {NEW_DEALS_DAYS} days</h1>
+    head = f'''<header><h1><span>BCS</span> New Opportunities · last {NEW_DEALS_DAYS} days</h1>
   <div class="meta">created {since.strftime("%b %-d")} – {now_local.strftime("%b %-d")} · updated <b>{updated}</b> MT</div></header>'''
-    tag = f'<section class="slide" data-dur="{SLIDE_SECONDS_NEWDEALS}" data-key="newdeals" data-label="New deals">'
+    tag = f'<section class="slide" data-dur="{SLIDE_SECONDS_NEWDEALS}" data-key="newdeals" data-label="New opps">'
     if deals is None:
         return tag + head + '<div class="empty"><b>Deals unavailable</b><small>The HubSpot key needs deals read access.</small></div></section>'
     amt = lambda d: float(d.get("amount") or 0)
@@ -716,11 +716,11 @@ def render_new_deals(deals, now_local, updated):
             rest = mine[NEW_DEALS_PER_REP:]
             items.append(f'<div class="more">+{len(rest)} more · {money(sum(amt(d) for d in rest))}</div>')
         cols.append(f'''<div class="ndcol"><div class="ndh"><span>{html.escape(name)}</span>
-  <b>{len(mine)}</b><small>{money(v) if mine else "no new deals"}</small></div>
+  <b>{len(mine)}</b><small>{money(v) if mine else "no new opportunities"}</small></div>
   <div class="ndlist">{"".join(items) or '<div class="none">—</div>'}</div></div>''')
     legend = " ".join(f'<em style="background:{rgb(l)}">{l}</em>' for l in
                       ["Qualified", "Demo", "Proposal Sent", "Decision Making", "Contract Review"])
-    foot = (f'<footer><div>Team: {plural(team_n, "new deal")} · {money(team_v)} · current stage shown · {legend}</div>'
+    foot = (f'<footer><div>Team: {plural(team_n, "new opportunity")} · {money(team_v)} · current stage shown · {legend}</div>'
             f'<div>Rolling {NEW_DEALS_DAYS} days</div></footer>')
     return tag + head + f'<div class="ndgrid">{"".join(cols)}</div>' + foot + "</section>"
 
