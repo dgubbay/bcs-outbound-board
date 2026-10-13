@@ -1,11 +1,19 @@
 name: Build outbound board
 
+# GitHub's cron is throttled on small repos (runs hours apart), so the board keeps itself
+# fresh with a self-chaining loop: each run builds + deploys, waits, then dispatches the next run.
+# Business hours (Mon–Fri 6am–7pm MT): rebuild every ~15 min. Otherwise: no build, check back hourly.
+# The schedule below only exists to restart the chain if it ever breaks.
 on:
   schedule:
-    # Every 15 min, Mon–Fri ~6am–7pm Mountain (cron is UTC)
-    - cron: "7,22,37,52 12-23 * * 1-5"
-    - cron: "7,22,37,52 0-1 * * 2-6"
+    - cron: "7,37 12-23 * * 1-5"
+    - cron: "7 0-1 * * 2-6"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even outside business hours"
+        type: boolean
+        default: false
   push:
     branches: [main]
 
@@ -13,13 +21,31 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: write
 
 concurrency:
-  group: pages
+  group: board
   cancel-in-progress: true
 
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.p.outputs.build }}
+      wait: ${{ steps.p.outputs.wait }}
+    steps:
+      - id: p
+        run: |
+          dow=$(TZ=America/Denver date +%u); hr=$(TZ=America/Denver date +%-H)
+          if [ "$dow" -le 5 ] && [ "$hr" -ge 6 ] && [ "$hr" -lt 19 ]; then biz=true; else biz=false; fi
+          if [ "$biz" = true ] || [ "${{ github.event_name }}" = push ] || [ "${{ inputs.force }}" = true ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"; else echo "build=false" >> "$GITHUB_OUTPUT"; fi
+          if [ "$biz" = true ]; then echo "wait=840" >> "$GITHUB_OUTPUT"; else echo "wait=3300" >> "$GITHUB_OUTPUT"; fi
+          echo "MT now: $(TZ=America/Denver date) · business hours: $biz"
+
   build:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -40,3 +66,17 @@ jobs:
           path: dist
       - id: deploy
         uses: actions/deploy-pages@v4
+
+  next:
+    needs: [plan, build]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - name: Wait, then start the next run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          sleep ${{ needs.plan.outputs.wait }}
+          gh workflow run board.yml --ref main
