@@ -1,6 +1,6 @@
 # BCS Outbound Board
 
-The TV page rotates: **Weekly Outbound Board (30s) → 30-Day Outbound Board (20s) → New Deals, rolling 7 days (20s) → Quota attainment (20s) → This-quarter pipeline (25s) → Next-quarter pipeline (25s)**. Arrow keys step through pages, space pauses. Add `#board`, `#30d`, `#newdeals`, `#quota`, `#thisq` or `#nextq` to the URL to pin one page.
+The TV page rotates: **Weekly Outbound Board (30s) → 30-Day Outbound Board (20s) → Latest deal celebration (15s) → New Deals, rolling 7 days (20s) → Closed-won celebration (20s) → Quota attainment (20s) → This-quarter pipeline (25s) → Next-quarter pipeline (25s)**. Arrow keys step through pages, space pauses. Add `#board`, `#30d`, `#newdeal`, `#newdeals`, `#wins`, `#quota`, `#thisq` or `#nextq` to the URL to pin one page.
 
 **Pipeline pages** show every rep as a row, open deals broken out by stage (Qualified → Contract Review, plus Delayed), with total and weighted pipeline. The this-quarter page also has an Overdue column: open deals whose close date passed before the quarter started.
 
@@ -37,7 +37,6 @@ Service key scopes needed: `crm.objects.contacts.read`, `crm.objects.owners.read
 ## Prospect meetings
 The meetings column counts only meetings booked with a **brand-new prospect**: none of the meeting's associated contacts or companies had a deal (any stage) when the meeting was booked. Meetings with an existing deal show as "+N on deals"; meetings with no linked contact/company fall back to the meeting type (Discovery Demo = new) and otherwise show as "unlinked". Without deals + companies read access, the board shows all meetings instead.
 
-David Gubbay (sales manager) is intentionally not on the board.
 
 ## New Deals page
 Every deal created in the last 7 days (rolling), one column per rep: deal name, amount and current stage, largest first.
@@ -49,5 +48,12 @@ Pipeline stages are colored from red (Contract Review, closest to signature) thr
 Dials, connects and talk time count outbound prospecting only: a call is dropped if its contact has an open deal (any owner). The board footer shows how many calls were excluded.
 
 ## Quota attainment
-Quotas live in `QUOTAS` at the top of `scripts/build.py` (annual amount + the date it starts; quarterly = annual ÷ 4). Current setup: Rick $690K/yr; Wyatt and Hunter $500K/yr starting Q1 2027; Thomas $1M/yr starting Q2 2027. Before a rep's start date the row shows "Ramping" with won and pipeline only.
+Quotas live in `QUOTAS` at the top of `scripts/build.py` (annual amount + the date it starts; quarterly = annual ÷ 4). Current setup: Rick $690K/yr; David $200K/yr; Wyatt and Hunter $500K/yr starting Q1 2027; Thomas $1M/yr starting Q2 2027. Before a rep's start date the row shows "Ramping" with won and pipeline only.
 Each row: closed-won this quarter vs quarterly quota (bar with a white pace line for how far through the quarter we are), attainment %, gap, pipeline coverage (open deals this quarter + overdue ÷ gap), forecast (won + weighted pipeline) and year-to-date vs annual quota.
+
+## Celebration pages
+**Latest deal**: the single most recently created deal by anyone on the roster: rep, deal name, amount, stage, how long ago.
+**Closed won**: the most recent closed-won deal as the hero (gold, confetti), the last-30-day tally, and other recent wins underneath (or the previous three wins if it's been quiet).
+
+## Refresh loop
+GitHub's scheduler is throttled on small repos, so the workflow re-triggers itself: build + deploy, wait ~14 minutes, dispatch the next run (business hours Mon–Fri 6am–7pm MT; hourly check otherwise). The cron schedule only restarts the loop if it breaks.
