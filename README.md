@@ -1,6 +1,6 @@
 # BCS Outbound Board
 
-The TV page rotates: **Weekly Outbound Board (30s) → 30-Day Outbound Board (20s) → New opportunity (15s) → New opportunities, rolling 7 days (20s) → Closed-won celebration (20s) → Quota attainment (20s) → This-quarter pipeline (25s) → Next-quarter pipeline (25s)**. Arrow keys step through pages, space pauses. Add `#board`, `#30d`, `#newdeal`, `#newdeals`, `#wins`, `#quota`, `#thisq` or `#nextq` to the URL to pin one page.
+The TV page rotates: **Weekly Outbound Board (30s) → 30-Day Outbound Board (20s) → New opportunities: latest one on top + rolling 7 days by rep (25s) → Closed-won celebration (20s) → Quota attainment (20s) → This-quarter pipeline (25s) → Next-quarter pipeline (25s)**. Arrow keys step through pages, space pauses. Add `#board`, `#30d`, `#newdeals`, `#wins`, `#quota`, `#thisq` or `#nextq` to the URL to pin one page.
 
 **Pipeline pages** show every rep as a row, open deals broken out by stage (Qualified → Contract Review, plus Delayed), with total and weighted pipeline. The this-quarter page also has an Overdue column: open deals whose close date passed before the quarter started.
 
