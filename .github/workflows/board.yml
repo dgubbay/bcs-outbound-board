@@ -23,13 +23,6 @@ permissions:
   id-token: write
   actions: write
 
-concurrency:
-  group: board
-  # A push (code change) interrupts a sleeping loop run and takes over the loop.
-  # A loop-dispatched run just queues behind its predecessor for the few seconds it needs to finish,
-  # so loop runs end as "success" instead of "cancelled".
-  cancel-in-progress: ${{ github.event_name == 'push' }}
-
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -50,6 +43,9 @@ jobs:
     needs: plan
     if: needs.plan.outputs.build == 'true'
     runs-on: ubuntu-latest
+    concurrency:            # deploys queue behind each other; nothing waits on the loop's sleep
+      group: pages-deploy
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
@@ -82,4 +78,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           sleep ${{ needs.plan.outputs.wait }}
+          # Keep exactly one loop alive: if a newer run of this workflow exists (e.g. a code push
+          # started its own loop), let that one carry on and stop here.
+          me=$(gh run view ${{ github.run_id }} --json createdAt -q .createdAt)
+          newer=$(gh run list --workflow board.yml --limit 30 --json databaseId,createdAt,status \
+            --jq "[.[] | select(.databaseId != ${{ github.run_id }} and .status != \"completed\" and .createdAt > \"$me\")] | length")
+          if [ "$newer" -gt 0 ]; then echo "A newer run is active — handing off the loop."; exit 0; fi
           gh workflow run board.yml --ref main
