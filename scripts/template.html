@@ -101,10 +101,10 @@
   .ptotals .pc b{font-size:3vh}
   .pc.hot small{color:rgba(22,16,65,.85);font-weight:600}
   /* new deals page */
-  .ndgrid{flex:1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1.2vw;min-height:0}
+  .ndgrid{flex:1;display:grid;gap:1.2vw;min-height:0}
   .ndcol{display:flex;flex-direction:column;gap:1vh;min-height:0}
-  .ndh{display:flex;align-items:baseline;gap:.8vw;padding:0 .4vw .8vh;border-bottom:.3vh solid var(--purple)}
-  .ndh span{flex:1;min-width:0;font-size:2.6vh;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ndh{display:flex;flex-wrap:wrap;align-items:baseline;gap:.2vh .8vw;padding:0 .4vw .8vh;border-bottom:.3vh solid var(--purple)}
+  .ndh span{flex-basis:100%;min-width:0;font-size:2.6vh;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ndh b{font-size:4.4vh;font-weight:800;color:var(--teal);line-height:1}
   .ndh small{margin:0;font-size:2vh;font-weight:700;color:var(--ink)}
   .ndlist{display:flex;flex-direction:column;gap:.8vh;min-height:0;overflow:hidden}
@@ -155,6 +155,14 @@
   .wcard b{font-size:3vh;color:#FDE14B;font-weight:800}
   .wcard span{font-size:1.5vh;color:var(--mute)}
   .celebrate header,.celebrate footer{position:relative}
+  .oppbanner{display:flex;align-items:center;justify-content:space-between;gap:2vw;padding:1.6vh 2vw;border-radius:1.6vh;
+    background:linear-gradient(90deg,rgba(0,183,209,.18),rgba(107,79,160,.25));border:.25vh solid rgba(0,183,209,.55)}
+  .ob-left{min-width:0}
+  .ob-kicker{font-size:1.8vh;font-weight:800;letter-spacing:.3em;text-transform:uppercase;color:var(--teal)}
+  .ob-who{font-size:4.6vh;font-weight:800;line-height:1.1}
+  .ob-what{font-size:2.4vh;color:var(--mute);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ob-right{display:flex;flex-direction:column;align-items:flex-end;gap:.8vh;flex-shrink:0}
+  .ob-right b{font-size:7.5vh;font-weight:900;line-height:1;color:var(--teal)}
   #stale{display:none;position:fixed;inset:auto 0 0 0;background:var(--bad);color:#fff;
     text-align:center;font-size:2.2vh;font-weight:700;padding:1vh}
 </style>

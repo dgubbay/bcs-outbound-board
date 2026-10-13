@@ -69,7 +69,7 @@ CLOSED_STAGES = {
     "Won": {"242932c5-7c92-4aea-92ab-d2bbab06d462", "1296150580", "27199892"},
     "Lost": {"25636d46-96b1-49d3-b3cc-b031632ef786", "3810ebed-c181-442b-a564-01c1f7d53bb7", "1296150581"},
 }
-SLIDE_SECONDS_NEWDEALS = 20
+SLIDE_SECONDS_NEWDEALS = 25
 SLIDE_SECONDS_QUOTA = 20
 
 # Annual quotas and the date each one starts (per David, 2026-10-09). Quarterly quota = annual ÷ 4.
@@ -406,7 +406,9 @@ def hm(ms):
 
 
 def plural(n, word):
-    return f"{n} {word}{'' if n == 1 else 's'}"
+    if n == 1:
+        return f"{n} {word}"
+    return f"{n} {word[:-1] + 'ies' if word.endswith('y') and word[-2:-1] not in 'aeiou' else word + 's'}"
 
 
 # ---------------------------------------------------------------- outbound board slide
@@ -692,11 +694,26 @@ def render_wins(won, now_local, updated):
 <footer><div>Closed-won deals, newest first</div><div>updated <b>{updated}</b> MT</div></footer></section>'''
 
 
-def render_new_deals(deals, now_local, updated):
+def latest_banner(d, now_local):
+    if not d:
+        return ""
+    lbl = stage_label(d.get("dealstage"))
+    created = ts(d.get("createdate"))
+    amt = float(d.get("amount") or 0)
+    return f'''<div class="oppbanner">
+  <div class="ob-left"><div class="ob-kicker">Latest opportunity</div>
+    <div class="ob-who">{html.escape(REPS.get(d.get("hubspot_owner_id"), ""))}</div>
+    <div class="ob-what">{html.escape((d.get("dealname") or "Untitled").strip())}</div></div>
+  <div class="ob-right"><b>{money(amt) if amt else "Amount TBD"}</b>
+    <div class="tags">{f'<em style="background:{rgb(lbl)}">{lbl}</em>' if lbl != "Other" else ""}<span>created {ago(created, now_local) if created else ""}</span></div></div>
+</div>'''
+
+
+def render_new_deals(deals, now_local, updated, latest=None):
     since = now_local - timedelta(days=NEW_DEALS_DAYS)
     head = f'''<header><h1><span>BCS</span> New Opportunities · last {NEW_DEALS_DAYS} days</h1>
   <div class="meta">created {since.strftime("%b %-d")} – {now_local.strftime("%b %-d")} · updated <b>{updated}</b> MT</div></header>'''
-    tag = f'<section class="slide" data-dur="{SLIDE_SECONDS_NEWDEALS}" data-key="newdeals" data-label="New opps">'
+    tag = f'<section class="slide" data-dur="{SLIDE_SECONDS_NEWDEALS}" data-key="newdeals" data-label="New opportunities">'
     if deals is None:
         return tag + head + '<div class="empty"><b>Deals unavailable</b><small>The HubSpot key needs deals read access.</small></div></section>'
     amt = lambda d: float(d.get("amount") or 0)
@@ -716,13 +733,15 @@ def render_new_deals(deals, now_local, updated):
             rest = mine[NEW_DEALS_PER_REP:]
             items.append(f'<div class="more">+{len(rest)} more · {money(sum(amt(d) for d in rest))}</div>')
         cols.append(f'''<div class="ndcol"><div class="ndh"><span>{html.escape(name)}</span>
-  <b>{len(mine)}</b><small>{money(v) if mine else "no new opportunities"}</small></div>
+  <b>{len(mine)}</b><small>{money(v) if mine else "none yet"}</small></div>
   <div class="ndlist">{"".join(items) or '<div class="none">—</div>'}</div></div>''')
     legend = " ".join(f'<em style="background:{rgb(l)}">{l}</em>' for l in
                       ["Qualified", "Demo", "Proposal Sent", "Decision Making", "Contract Review"])
     foot = (f'<footer><div>Team: {plural(team_n, "new opportunity")} · {money(team_v)} · current stage shown · {legend}</div>'
             f'<div>Rolling {NEW_DEALS_DAYS} days</div></footer>')
-    return tag + head + f'<div class="ndgrid">{"".join(cols)}</div>' + foot + "</section>"
+    return (tag + head + latest_banner(latest, now_local) +
+            f'<div class="ndgrid" style="grid-template-columns:repeat({len(REPS)},minmax(0,1fr))">{"".join(cols)}</div>' +
+            foot + "</section>")
 
 
 # ---------------------------------------------------------------- main
@@ -767,11 +786,10 @@ def build(data, now_local):
             render_pipeline_quarter(data.get("open_deals"), key="nextq", label=f"{nqn} pipeline", qs=nqs, qe=nqe,
                                     qlabel=f"{nqn} {nqs.year}", today=today, include_overdue=False, updated=updated))
     tpl = Path(__file__).with_name("template.html").read_text()
-    newdeals = render_new_deals(data.get("deals"), now_local, updated)
+    newdeals = render_new_deals(data.get("deals"), now_local, updated, data.get("latest_deal"))
     quota = render_quota(data.get("won"), data.get("open_deals"), now_local, updated)
-    latest = render_latest_deal(data.get("latest_deal"), now_local, updated)
     wins = render_wins(data.get("won"), now_local, updated)
-    page = (tpl.replace("{{SLIDES}}", weekly + rolling + latest + newdeals + wins + quota + reps)
+    page = (tpl.replace("{{SLIDES}}", weekly + rolling + newdeals + wins + quota + reps)
                .replace("{{GEN}}", str(int(now_local.timestamp()))))
     summary = {k: (None if v is None else len(v)) for k, v in data.items()}
     summary["week"] = [{k: r[k] for k in ("name", "dials", "deal_calls", "connects", "meetings", "mtg_existing", "mtg_unlinked", "deals", "sqls", "freemiums")}
