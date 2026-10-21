@@ -176,36 +176,48 @@ def deal_createdates(token, ids):
     return out
 
 
-def open_deal_ids(token, ids):
-    """Subset of deal ids that are still open (not won/lost)."""
-    out = set()
+def deal_flags(token, ids):
+    """{deal_id: (is_open, is_won)}"""
+    out = {}
     ids = list(dict.fromkeys(ids))
     for i in range(0, len(ids), 100):
         r = requests.post(f"{API}/crm/v3/objects/deals/batch/read",
-                          json={"properties": ["hs_is_closed"], "inputs": [{"id": x} for x in ids[i:i + 100]]},
+                          json={"properties": ["hs_is_closed", "hs_is_closed_won"], "inputs": [{"id": x} for x in ids[i:i + 100]]},
                           headers={"Authorization": f"Bearer {token}"}, timeout=30)
         r.raise_for_status()
         for d in r.json().get("results", []):
-            if (d["properties"].get("hs_is_closed") or "false") != "true":
-                out.add(str(d["id"]))
+            p = d["properties"]
+            out[str(d["id"])] = ((p.get("hs_is_closed") or "false") != "true", (p.get("hs_is_closed_won") or "false") == "true")
     return out
 
 
 def calls_on_live_deals(token, calls):
-    """Ids of calls whose contact has an open deal — that's deal work, not outbound prospecting."""
+    """Ids of calls that are deal or client work, not outbound prospecting: the call's contact OR company
+    has an open deal, or is an existing customer (any closed-won deal). Per David, 2026-10-20 — e.g. a
+    62-min pricing call with an existing client whose expansion deal was marked Lost slipped through
+    the open-deal-only rule."""
     ids = [c["hs_object_id"] for c in calls if c.get("hs_object_id")]
     if not ids:
         return []
     try:
         c2ct = assoc(token, "calls", "contacts", ids)
+        c2co = assoc(token, "calls", "companies", ids)
         contacts = {x for v in c2ct.values() for x in v}
+        companies = {x for v in c2co.values() for x in v}
         ct2d = assoc(token, "contacts", "deals", contacts) if contacts else {}
-        live = open_deal_ids(token, {d for v in ct2d.values() for d in v})
+        co2d = assoc(token, "companies", "deals", companies) if companies else {}
+        flags = deal_flags(token, {d for v in list(ct2d.values()) + list(co2d.values()) for d in v})
     except requests.HTTPError as e:
         print(f"WARN: live-deal call filter unavailable ({e.response.status_code})", file=sys.stderr)
         return None
-    live_contacts = {ct for ct, ds in ct2d.items() if any(d in live for d in ds)}
-    return [cid for cid, cts in c2ct.items() if any(ct in live_contacts for ct in cts)]
+    def busy(deals):
+        return any(flags.get(d, (False, False))[0] or flags.get(d, (False, False))[1] for d in deals)
+    out = []
+    for cid in ids:
+        cts, cos = c2ct.get(cid, []), c2co.get(cid, [])
+        if any(busy(ct2d.get(ct, [])) for ct in cts) or any(busy(co2d.get(co, [])) for co in cos):
+            out.append(cid)
+    return out
 
 
 NEW_TYPES = {"Discovery Demo"}                                   # meeting-type fallback when nothing is linked
@@ -467,7 +479,7 @@ def render_board(rows, *, classified=True, filtered=True, key, label, dur, title
 </div>
 <footer>
   <div>Connect = outbound call of 2–15 min (outcome tag ignored) · Talk time = minutes on those calls · {'Prospect mtg = booked with a contact/company that had no deal yet' if classified else 'Prospect-vs-deal meeting split needs deals + companies read access'} · Deals created · SQLs & freemiums by owner</div>
-  <div>{f"Excludes {plural(sum(r['deal_calls'] for r in rows), 'call')} to contacts on open deals" if filtered else "Target 60 dials/day · 4 mtgs/wk"}</div>
+  <div>{f"Excludes {plural(sum(r['deal_calls'] for r in rows), 'call')} to open deals & existing clients" if filtered else "Target 60 dials/day · 4 mtgs/wk"}</div>
 </footer>
 </section>"""
 
