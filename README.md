@@ -35,7 +35,7 @@ Open the Pages URL in the TV browser, full screen. Turn off the TV's screensaver
 Service key scopes needed: `crm.objects.contacts.read`, `crm.objects.owners.read`, `crm.objects.deals.read`, `crm.objects.companies.read`. If a scope is missing that column shows "—" instead of breaking the board.
 
 ## Prospect meetings
-The meetings column counts only meetings booked with a **brand-new prospect**: none of the meeting's associated contacts or companies had a deal (any stage) when the meeting was booked. Meetings with an existing deal show as "+N on deals"; meetings with no linked contact/company fall back to the meeting type (Discovery Demo = new) and otherwise show as "unlinked". Without deals + companies read access, the board shows all meetings instead.
+The meetings column counts only **outbound** prospect meetings: none of the meeting's contacts or companies had a deal (any stage) when it was booked, AND no contact on it is an inbound lead — original source other than Offline (website, search, ads, referrals, e.g. SQLs) or a freemium user. Inbound-lead meetings show as "+N inbound". Meetings with an existing deal show as "+N on deals"; meetings with no linked contact/company fall back to the meeting type (Discovery Demo = new) and otherwise show as "unlinked". Without deals + companies read access, the board shows all meetings instead.
 
 
 ## New Deals page
