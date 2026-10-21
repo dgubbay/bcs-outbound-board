@@ -224,29 +224,27 @@ NEW_TYPES = {"Discovery Demo"}                                   # meeting-type 
 EXISTING_TYPES = {"Follow-up Demo", "Proposal Review", "Follow up Call", "Follow-up Call"}
 
 
-OUTBOUND_SOURCES = {"OFFLINE"}   # HubSpot original source for contacts reps add themselves (manual, import, ZoomInfo…)
-
-
-def contact_sources(token, ids):
-    """{contact_id: (hs_analytics_source, freemium_user)}"""
-    out = {}
+def sql_contacts(token, ids):
+    """Contacts that are, or have ever been, Sales Qualified Leads (lifecycle stage)."""
+    out = set()
     ids = list(dict.fromkeys(ids))
     for i in range(0, len(ids), 100):
         r = requests.post(f"{API}/crm/v3/objects/contacts/batch/read",
-                          json={"properties": ["hs_analytics_source", "freemium_user"],
+                          json={"properties": ["lifecyclestage", "hs_v2_date_entered_salesqualifiedlead"],
                                 "inputs": [{"id": x} for x in ids[i:i + 100]]},
                           headers={"Authorization": f"Bearer {token}"}, timeout=30)
         r.raise_for_status()
         for c in r.json().get("results", []):
             p = c["properties"]
-            out[str(c["id"])] = (p.get("hs_analytics_source"), (p.get("freemium_user") or "") == "true")
+            if p.get("lifecyclestage") == "salesqualifiedlead" or p.get("hs_v2_date_entered_salesqualifiedlead"):
+                out.add(str(c["id"]))
     return out
 
 
 def classify_meetings(token, meetings):
     """meeting id → "existing" (a deal already existed with that contact/company when it was booked),
-    "inbound" (a contact came in through the website/search/ads/referral or freemium — e.g. SQLs;
-    per David, 2026-10-20 those aren't outbound wins), "new" (outbound prospect meeting) or
+    "inbound" (a contact on the meeting is, or has been, an SQL — per David, 2026-10-20; how the
+    contact was created doesn't matter), "new" (outbound prospect meeting) or
     "unlinked" (no contact/company to check).
     Returns None if the key lacks the deals/companies scopes."""
     ids = [m["hs_object_id"] for m in meetings if m.get("hs_object_id")]
@@ -260,7 +258,7 @@ def classify_meetings(token, meetings):
         c2d = assoc(token, "contacts", "deals", contacts) if contacts else {}
         co2d = assoc(token, "companies", "deals", companies) if companies else {}
         created = deal_createdates(token, {d for v in list(c2d.values()) + list(co2d.values()) for d in v})
-        srcs = contact_sources(token, contacts) if contacts else {}
+        sqls = sql_contacts(token, contacts) if contacts else set()
     except requests.HTTPError as e:
         print(f"WARN: meeting classification unavailable ({e.response.status_code})", file=sys.stderr)
         return None
@@ -275,8 +273,7 @@ def classify_meetings(token, meetings):
             continue
         deals = {d for c in cs for d in c2d.get(c, [])} | {d for c in cos for d in co2d.get(c, [])}
         prior = [d for d in deals if created.get(d) and booked and ts(created[d]) < booked]
-        inbound = any((srcs.get(c, (None, False))[0] not in OUTBOUND_SOURCES | {None}) or srcs.get(c, (None, False))[1]
-                      for c in cs)
+        inbound = any(c in sqls for c in cs)
         out[mid] = "existing" if prior else "inbound" if inbound else "new"
     return out
 
@@ -454,7 +451,7 @@ def plural(n, word):
 def mtg_note(r, base):
     extra = []
     if r["mtg_inbound"]:
-        extra.append(f"+{r['mtg_inbound']} inbound")
+        extra.append(f"+{r['mtg_inbound']} SQL")
     if r["mtg_existing"]:
         extra.append(f"+{r['mtg_existing']} on deals")
     if r["mtg_unlinked"]:
@@ -506,7 +503,7 @@ def render_board(rows, *, classified=True, filtered=True, key, label, dur, title
   </div>
 </div>
 <footer>
-  <div>Connect = outbound call of 2–15 min (outcome tag ignored) · Talk time = minutes on those calls · {'Prospect mtg = outbound contact (not SQL/freemium/web), no deal yet' if classified else 'Prospect-vs-deal meeting split needs deals + companies read access'} · Deals created · SQLs & freemiums by owner</div>
+  <div>Connect = outbound call of 2–15 min (outcome tag ignored) · Talk time = minutes on those calls · {'Prospect mtg = contact not an SQL, no deal yet' if classified else 'Prospect-vs-deal meeting split needs deals + companies read access'} · Deals created · SQLs & freemiums by owner</div>
   <div>{f"Excludes {plural(sum(r['deal_calls'] for r in rows), 'call')} to open deals & existing clients" if filtered else "Target 60 dials/day · 4 mtgs/wk"}</div>
 </footer>
 </section>"""
