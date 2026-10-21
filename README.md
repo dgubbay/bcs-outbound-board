@@ -14,7 +14,7 @@ Office-TV dashboard of this week's outbound activity per rep, pulled from HubSpo
 | Dials per day | Calls owned by the rep with direction ≠ Inbound, bucketed Mon–Fri in Mountain time. Week resets Monday 12:00 AM MT. |
 | Pace target | 60 dials/day × business days elapsed (today prorated across 8am–5pm). Green ≥100%, amber ≥75%, red below. |
 | Talk time | Minutes on connected calls (outbound, 2–15 min, contact not on an open deal). |
-| Connect rate | Outbound calls of 2–15 minutes ÷ dials (over 15 min = a demo, not a cold-call connect). HubSpot's call-outcome tag is ignored. Calls to contacts with an open deal are excluded from both. |
+| Connect rate | Outbound calls of 2–15 minutes ÷ dials (over 15 min = a demo, not a cold-call connect). HubSpot's call-outcome tag is ignored. Calls to contacts/companies with an open deal or that are existing clients (any closed-won deal) are excluded from both. |
 | Meetings booked | Meetings created this week by the rep, booked ahead of their start time, excluding titles containing interview / round / role discussion / training / test / hold: / internal / 1:1, and auto-logged Zoom/Teams records. |
 
 ## Setup
@@ -45,7 +45,7 @@ Every deal created in the last 7 days (rolling), one column per rep: deal name, 
 Pipeline stages are colored from red (Contract Review, closest to signature) through orange to yellow (Qualified). Delayed is grey.
 
 ## Calls on live deals are excluded
-Dials, connects and talk time count outbound prospecting only: a call is dropped if its contact has an open deal (any owner). The board footer shows how many calls were excluded.
+Dials, connects and talk time count outbound prospecting only: a call is dropped if its contact or company has an open deal or is an existing client (any closed-won deal), whatever the owner. The board footer shows how many calls were excluded.
 
 ## Quota attainment
 Quotas live in `QUOTAS` at the top of `scripts/build.py` (annual amount + the date it starts; quarterly = annual ÷ 4). Current setup: Rick $690K/yr; David $200K/yr; Wyatt and Hunter $500K/yr starting Q1 2027; Thomas $1M/yr starting Q2 2027. Before a rep's start date the row shows "Ramping" with won and pipeline only.
