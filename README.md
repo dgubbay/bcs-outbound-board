@@ -13,8 +13,8 @@ Office-TV dashboard of this week's outbound activity per rep, pulled from HubSpo
 |---|---|
 | Dials per day | Calls owned by the rep with direction ≠ Inbound, bucketed Mon–Fri in Mountain time. Week resets Monday 12:00 AM MT. |
 | Pace target | 60 dials/day × business days elapsed (today prorated across 8am–5pm). Green ≥100%, amber ≥75%, red below. |
-| Talk time | Sum of `hs_call_duration` on calls with outcome **Connected**. |
-| Connect rate | Calls tagged Connected **and** lasting 2–15 min ÷ dials. |
+| Talk time | Minutes on connected calls (outbound, 2+ min, contact not on an open deal). |
+| Connect rate | Outbound calls of 2+ minutes ÷ dials. HubSpot's call-outcome tag is ignored. Calls to contacts with an open deal are excluded from both. |
 | Meetings booked | Meetings created this week by the rep, booked ahead of their start time, excluding titles containing interview / round / role discussion / training / test / hold: / internal / 1:1, and auto-logged Zoom/Teams records. |
 
 ## Setup
