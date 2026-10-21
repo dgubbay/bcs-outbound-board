@@ -34,6 +34,7 @@ REPS = {
 
 CONNECTED = "f240bbac-87c9-4f6e-bf70-924b57d47db7"
 REAL_CONNECT_MIN_MS = 120_000   # 2 min — screens out gatekeepers / hang-ups / short voicemails
+REAL_CONNECT_MAX_MS = 900_000   # 15 min — longer = scheduled demo, not a cold-call connect
 DIALS_PER_DAY = 60              # 300 / week
 MEETINGS_PER_WEEK = 4
 MEETING_EXCLUDE = ("interview", "round", "role discussion", "training", "test", "hold:",
@@ -347,9 +348,9 @@ def compute(data, start: date, buckets, bucket_of):
             r["bars"][b] += 1
         r["dials"] += 1
         dur = int(float(c.get("hs_call_duration") or 0))
-        # Connect = any outbound call of 2+ minutes (per David, 2026-10-20) — the HubSpot outcome tag
+        # Connect = any outbound call of 2–15 minutes (per David, 2026-10-20) — the HubSpot outcome tag
         # is ignored. Calls to contacts on open deals were already skipped above.
-        if dur >= REAL_CONNECT_MIN_MS:
+        if REAL_CONNECT_MIN_MS <= dur <= REAL_CONNECT_MAX_MS:
             r["connects"] += 1
             r["talk_ms"] += dur
     for m in data["meetings"]:
@@ -465,7 +466,7 @@ def render_board(rows, *, classified=True, filtered=True, key, label, dur, title
   </div>
 </div>
 <footer>
-  <div>Connect = outbound call of 2+ min (outcome tag ignored) · Talk time = minutes on those calls · {'Prospect mtg = booked with a contact/company that had no deal yet' if classified else 'Prospect-vs-deal meeting split needs deals + companies read access'} · Deals created · SQLs & freemiums by owner</div>
+  <div>Connect = outbound call of 2–15 min (outcome tag ignored) · Talk time = minutes on those calls · {'Prospect mtg = booked with a contact/company that had no deal yet' if classified else 'Prospect-vs-deal meeting split needs deals + companies read access'} · Deals created · SQLs & freemiums by owner</div>
   <div>{f"Excludes {plural(sum(r['deal_calls'] for r in rows), 'call')} to contacts on open deals" if filtered else "Target 60 dials/day · 4 mtgs/wk"}</div>
 </footer>
 </section>"""
