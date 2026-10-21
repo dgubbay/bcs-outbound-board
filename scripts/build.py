@@ -33,8 +33,7 @@ REPS = {
 }
 
 CONNECTED = "f240bbac-87c9-4f6e-bf70-924b57d47db7"
-REAL_CONNECT_MIN_MS = 120_000   # 2 min — screens out gatekeepers / hang-ups
-REAL_CONNECT_MAX_MS = 900_000   # 15 min — longer = scheduled demo, counted as meeting
+REAL_CONNECT_MIN_MS = 120_000   # 2 min — screens out gatekeepers / hang-ups / short voicemails
 DIALS_PER_DAY = 60              # 300 / week
 MEETINGS_PER_WEEK = 4
 MEETING_EXCLUDE = ("interview", "round", "role discussion", "training", "test", "hold:",
@@ -348,10 +347,11 @@ def compute(data, start: date, buckets, bucket_of):
             r["bars"][b] += 1
         r["dials"] += 1
         dur = int(float(c.get("hs_call_duration") or 0))
-        if c.get("hs_call_disposition") == CONNECTED:
+        # Connect = any outbound call of 2+ minutes (per David, 2026-10-20) — the HubSpot outcome tag
+        # is ignored. Calls to contacts on open deals were already skipped above.
+        if dur >= REAL_CONNECT_MIN_MS:
+            r["connects"] += 1
             r["talk_ms"] += dur
-            if REAL_CONNECT_MIN_MS <= dur <= REAL_CONNECT_MAX_MS:
-                r["connects"] += 1
     for m in data["meetings"]:
         r = rows.get(m.get("hubspot_owner_id"))
         if r and keep(local_day(m.get("hs_createdate"))) and is_prospect_meeting(m):
@@ -440,7 +440,7 @@ def render_board(rows, *, classified=True, filtered=True, key, label, dur, title
   <div class="dials"><div class="bars">{''.join(bars)}</div>
     <div class="total {pace_class(r['dials'], dial_target)}"><b>{r['dials']}</b><small>pace target {dial_target}</small></div></div>
   <div class="metric"><b>{hm(r['talk_ms'])}</b><small>talk time</small></div>
-  <div class="metric"><b>{pct}%</b><small>{plural(r['connects'], 'real connect')}</small></div>
+  <div class="metric"><b>{pct}%</b><small>{plural(r['connects'], 'connect')}</small></div>
   <div class="metric {pace_class(r['meetings'], mtg_target)}"><b>{r['meetings']}</b><small>{mtg_note(r, mtg_label)}</small></div>
   <div class="metric pipe"><b>{num(r['deals'])}</b><small>{money(r['deal_amt']) if r['deals'] else 'no new deals'}</small></div>
   <div class="metric inb"><b>{num(r['sqls'])}</b><small>SQLs</small></div>
@@ -465,7 +465,7 @@ def render_board(rows, *, classified=True, filtered=True, key, label, dur, title
   </div>
 </div>
 <footer>
-  <div>Connect = Connected call 2–15 min · {'Prospect mtg = booked with a contact/company that had no deal yet' if classified else 'Prospect-vs-deal meeting split needs deals + companies read access'} · Deals created · SQLs & freemiums by owner</div>
+  <div>Connect = outbound call of 2+ min (outcome tag ignored) · Talk time = minutes on those calls · {'Prospect mtg = booked with a contact/company that had no deal yet' if classified else 'Prospect-vs-deal meeting split needs deals + companies read access'} · Deals created · SQLs & freemiums by owner</div>
   <div>{f"Excludes {plural(sum(r['deal_calls'] for r in rows), 'call')} to contacts on open deals" if filtered else "Target 60 dials/day · 4 mtgs/wk"}</div>
 </footer>
 </section>"""
