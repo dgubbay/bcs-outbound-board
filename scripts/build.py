@@ -71,6 +71,8 @@ CLOSED_STAGES = {
 }
 SLIDE_SECONDS_NEWDEALS = 25
 SLIDE_SECONDS_QUOTA = 20
+SLIDE_SECONDS_LEADS = 25
+LEADS_LATEST = 9
 
 # Annual quotas and the date each one starts (per David, 2026-10-09). Quarterly quota = annual ÷ 4.
 # Before a rep's start date they're ramping: no quota, the row shows closed-won and pipeline only.
@@ -278,6 +280,24 @@ def classify_meetings(token, meetings):
     return out
 
 
+LEAD_PROPS = ["firstname", "lastname", "email", "company", "hubspot_owner_id",
+              "hs_v2_date_entered_salesqualifiedlead", "freemium_sign_up_date"]
+
+
+def owner_names(token, ids):
+    """Names for lead owners who aren't on the roster (e.g. CS or ops users)."""
+    out = {}
+    for oid in ids:
+        try:
+            r = requests.get(f"{API}/crm/v3/owners/{oid}", headers={"Authorization": f"Bearer {token}"}, timeout=20)
+            r.raise_for_status()
+            o = r.json()
+            out[oid] = f'{o.get("firstName") or ""} {o.get("lastName") or ""}'.strip() or o.get("email") or f"Owner {oid}"
+        except requests.RequestException:
+            out[oid] = f"Owner {oid}"
+    return out
+
+
 def fetch(token, since_local):
     """Everything since `since_local` (start of the 30-day window, which always covers this week)."""
     owners = {"propertyName": "hubspot_owner_id", "operator": "IN", "values": list(REPS)}
@@ -315,6 +335,11 @@ def fetch(token, since_local):
                                 "value": datetime(since_local.year if since_local.month > 1 else since_local.year - 1, 1, 1,
                                                   tzinfo=TZ).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}],
                      ["hubspot_owner_id", "dealname", "amount", "closedate"]),
+        # Leads page: every SQL / freemium signup in the window, whoever owns it (or nobody).
+        "lead_sql": safe("contacts", [{"propertyName": "hs_v2_date_entered_salesqualifiedlead",
+                                       "operator": "GTE", "value": iso}], LEAD_PROPS),
+        "lead_free": safe("contacts", [{"propertyName": "freemium_sign_up_date",
+                                        "operator": "GTE", "value": date_ms}], LEAD_PROPS),
         "open_deals": safe("deals", [owners, {"propertyName": "hs_is_closed", "operator": "EQ", "value": "false"}],
                            ["hubspot_owner_id", "dealname", "amount", "dealstage", "pipeline", "closedate",
                             "notes_last_updated", "hs_deal_stage_probability"]),
@@ -782,6 +807,92 @@ def render_new_deals(deals, now_local, updated, latest=None):
             foot + "</section>")
 
 
+def merge_leads(sqls, frees, start):
+    """One row per contact: earliest in-window date, and whether it came in as SQL, Freemium or both."""
+    leads = {}
+    for kind, rows, prop in (("SQL", sqls, "hs_v2_date_entered_salesqualifiedlead"),
+                             ("Freemium", frees, "freemium_sign_up_date")):
+        for c in rows or []:
+            d = local_day(c.get(prop))
+            if not d or d < start:
+                continue
+            cid = c.get("hs_object_id") or c.get("email") or id(c)
+            L = leads.setdefault(cid, {"c": c, "kinds": set(), "day": d, "t": ts(c.get(prop))})
+            L["kinds"].add(kind)
+            if d < L["day"]:
+                L["day"], L["t"] = d, ts(c.get(prop))
+    return list(leads.values())
+
+
+def render_leads(sqls, frees, owners, *, start, first_mon, week_labels, now_local, updated):
+    tag = f'<section class="slide" data-dur="{SLIDE_SECONDS_LEADS}" data-key="leads" data-label="Leads">'
+    head = (f'<header><h1><span>BCS</span> Inbound Leads · last {ROLLING_DAYS} days</h1>'
+            f'<div class="meta">{start.strftime("%b %-d")} – {now_local.strftime("%b %-d")} · SQLs + freemium signups'
+            f' · updated <b>{updated}</b> MT</div></header>')
+    if sqls is None and frees is None:
+        return tag + head + '<div class="empty"><b>Leads unavailable</b><small>Contacts query failed.</small></div></section>'
+    leads = merge_leads(sqls, frees, start)
+    n_weeks = len(week_labels)
+    names = dict(REPS)
+    names.update(owners or {})
+    others = {L["c"].get("hubspot_owner_id") for L in leads} - set(REPS) - {None, ""}
+    order = list(REPS) + sorted(others, key=lambda o: names.get(o, o)) + [""]
+
+    def cell(ls, cls=""):
+        if not ls:
+            return f'<div class="lc {cls} zero"><b>0</b></div>'
+        s = sum("SQL" in L["kinds"] for L in ls)
+        f = sum("Freemium" in L["kinds"] for L in ls)
+        return (f'<div class="lc {cls}"><b>{len(ls)}</b><small><i class="ks">{s} SQL</i> · '
+                f'<i class="kf">{f} Free</i></small></div>')
+
+    wk = lambda L: (L["day"] - first_mon).days // 7
+    rows = []
+    for oid in order:
+        mine = [L for L in leads if (L["c"].get("hubspot_owner_id") or "") == oid]
+        if oid not in REPS and not mine:
+            continue
+        nm = names.get(oid, f"Owner {oid}") if oid else "Unassigned"
+        cls = "unassigned" if not oid else ("other" if oid not in REPS else "")
+        cells = "".join(cell([L for L in mine if wk(L) == i]) for i in range(n_weeks))
+        rows.append(f'<div class="lrow {cls}"><div class="name">{html.escape(nm)}</div>{cells}{cell(mine, "tot")}</div>')
+    team = "".join(cell([L for L in leads if wk(L) == i]) for i in range(n_weeks))
+    rows.append(f'<div class="lrow ltotals"><div class="name">Team</div>{team}{cell(leads, "tot")}</div>')
+    def rng(i):
+        a = max(start, first_mon + timedelta(weeks=i))
+        b = min(now_local.date(), first_mon + timedelta(weeks=i, days=6))
+        if a == b:
+            return a.strftime("%b %-d")
+        return f'{a.strftime("%b %-d")}–{b.strftime("%-d" if a.month == b.month else "%b %-d")}'
+    hdr = ("".join(f'<div>{rng(i)}</div>' for i in range(n_weeks - 1)) +
+           f'<div class="cur">This week<br><span>{rng(n_weeks - 1)}</span></div>')
+    hdr = f'<div class="lrow lhead"><div></div>{hdr}<div class="htot">{ROLLING_DAYS} days</div></div>'
+
+    latest = sorted(leads, key=lambda L: L["t"] or datetime.min.replace(tzinfo=TZ), reverse=True)[:LEADS_LATEST]
+    items = []
+    for L in latest:
+        c = L["c"]
+        who = f'{c.get("firstname") or ""} {c.get("lastname") or ""}'.strip() or c.get("email") or "Unknown"
+        oid = c.get("hubspot_owner_id") or ""
+        pills = "".join(f'<em class="{"ks" if k == "SQL" else "kf"}">{k}</em>' for k in sorted(L["kinds"], reverse=True))
+        rep = html.escape(names.get(oid, "Owner")) if oid else "Unassigned"
+        items.append(f'<div class="li{" un" if not oid else ""}"><span class="ld">{L["day"].strftime("%b %-d")}</span>'
+                     f'<span class="lw"><b>{html.escape(who)}</b><small>{html.escape((c.get("company") or "").strip())}</small></span>'
+                     f'<span class="lp">{pills}</span><span class="lo">{rep}</span></div>')
+    lat = (f'<div class="llatest"><div class="lk">Latest leads</div>'
+           f'<div class="lgrid">{"".join(items) or "<div class=none>No leads yet</div>"}</div></div>')
+    s = sum("SQL" in L["kinds"] for L in leads)
+    f = sum("Freemium" in L["kinds"] for L in leads)
+    un = sum(1 for L in leads if not L["c"].get("hubspot_owner_id"))
+    unb = f' · <b class="bad">{un} unassigned</b>' if un else ""
+    foot = (f'<footer><div>{plural(len(leads), "lead")} · {s} SQL · {f} freemium{unb}'
+            f' · each contact counted once, in the week it first came in</div>'
+            f'<div>Rolling {ROLLING_DAYS} days · weeks start Monday</div></footer>')
+    cols = f"minmax(0,1.5fr) repeat({n_weeks + 1},minmax(0,1fr))"
+    return (tag + head + f'<div class="leads" style="--lcols:{cols}">{hdr}<div class="lrows">{"".join(rows)}</div></div>'
+            + lat + foot + "</section>")
+
+
 # ---------------------------------------------------------------- main
 def build(data, now_local):
     updated = now_local.strftime("%-I:%M %p")
@@ -827,9 +938,12 @@ def build(data, now_local):
     newdeals = render_new_deals(data.get("deals"), now_local, updated, data.get("latest_deal"))
     quota = render_quota(data.get("won"), data.get("open_deals"), now_local, updated)
     wins = render_wins(data.get("won"), now_local, updated)
-    page = (tpl.replace("{{SLIDES}}", weekly + rolling + newdeals + wins + quota + reps)
+    leads = render_leads(data.get("lead_sql"), data.get("lead_free"), data.get("lead_owners"),
+                         start=start, first_mon=first_mon, week_labels=week_labels, now_local=now_local, updated=updated)
+    page = (tpl.replace("{{SLIDES}}", weekly + rolling + leads + newdeals + wins + quota + reps)
                .replace("{{GEN}}", str(int(now_local.timestamp()))))
     summary = {k: (None if v is None else len(v)) for k, v in data.items()}
+    summary["leads_merged"] = len(merge_leads(data.get("lead_sql"), data.get("lead_free"), start))
     summary["week"] = [{k: r[k] for k in ("name", "dials", "deal_calls", "connects", "meetings", "mtg_existing", "mtg_inbound", "mtg_unlinked", "deals", "sqls", "freemiums")}
                        for r in week_rows]
     summary["30d"] = [{k: r[k] for k in ("name", "dials", "connects", "meetings", "deals", "sqls", "freemiums")}
@@ -848,12 +962,15 @@ def main():
         data.setdefault("freemiums", None); data.setdefault("open_deals", None)
         data.setdefault("meeting_class", None); data.setdefault("excluded_calls", [])
         data.setdefault("won", None); data.setdefault("latest_deal", None)
+        data.setdefault("lead_sql", None); data.setdefault("lead_free", None); data.setdefault("lead_owners", {})
     else:
         token = os.environ.get("HUBSPOT_TOKEN")
         if not token:
             sys.exit("HUBSPOT_TOKEN not set")
         data = fetch(token, since)
         data["latest_deal"] = latest_deal(token)
+        others = {c.get("hubspot_owner_id") for c in (data["lead_sql"] or []) + (data["lead_free"] or [])}
+        data["lead_owners"] = owner_names(token, sorted(o for o in others if o and o not in REPS))
         data["excluded_calls"] = calls_on_live_deals(token, [c for c in data["calls"]
                                                              if c.get("hs_call_direction") != "INBOUND"])
         data["meeting_class"] = classify_meetings(token, [m for m in data["meetings"] if is_prospect_meeting(m)])
