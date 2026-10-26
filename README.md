@@ -1,6 +1,9 @@
 # BCS Outbound Board
 
-The TV page rotates: **Weekly Outbound Board (30s) → 30-Day Outbound Board (20s) → New opportunities: latest one on top + rolling 7 days by rep (25s) → Closed-won celebration (20s) → Quota attainment (20s) → This-quarter pipeline (25s) → Next-quarter pipeline (25s)**. Arrow keys step through pages, space pauses. Add `#board`, `#30d`, `#newdeals`, `#wins`, `#quota`, `#thisq` or `#nextq` to the URL to pin one page.
+The TV page rotates: **Weekly Outbound Board (30s) → 30-Day Outbound Board (20s) → Inbound leads (25s) → New opportunities: latest one on top + rolling 7 days by rep (25s) → Closed-won celebration (20s) → Quota attainment (20s) → This-quarter pipeline (25s) → Next-quarter pipeline (25s)**. Arrow keys step through pages, space pauses. Add `#board`, `#30d`, `#leads`, `#newdeals`, `#wins`, `#quota`, `#thisq` or `#nextq` to the URL to pin one page.
+
+**Inbound leads page:** every contact that became an SQL (`hs_v2_date_entered_salesqualifiedlead`) or signed up for freemium (`freemium_sign_up_date`) in the last 30 days, **whoever owns it**: roster reps, other HubSpot users, and an **Unassigned** row (highlighted red). Columns are Monday-start weeks plus a 30-day total; each cell shows the count split into SQL / Free. A contact that is both counts once, in the week it first came in. The bottom strip lists the 9 most recent leads and who they were routed to.
+
 
 **Pipeline pages** show every rep as a row, open deals broken out by stage (Qualified → Contract Review, plus Delayed), with total and weighted pipeline. The this-quarter page also has an Overdue column: open deals whose close date passed before the quarter started.
 
