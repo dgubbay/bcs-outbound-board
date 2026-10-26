@@ -72,7 +72,12 @@ CLOSED_STAGES = {
 SLIDE_SECONDS_NEWDEALS = 25
 SLIDE_SECONDS_QUOTA = 20
 SLIDE_SECONDS_LEADS = 25
-LEADS_LATEST = 9
+# HubSpot Leads object pipeline (default "Lead pipeline"): stage id → label, in funnel order.
+LEAD_STAGES = {"new-stage-id": "New", "attempting-stage-id": "Attempting", "connected-stage-id": "Connected",
+               "qualified-stage-id": "Qualified", "unqualified-stage-id": "Disqualified"}
+LEAD_STAGE_ORDER = ["New", "Attempting", "Connected", "Qualified", "Disqualified", "No lead record"]
+LEAD_STAGE_CLS = {"New": "st-new", "Attempting": "st-att", "Connected": "st-con", "Qualified": "st-q",
+                  "Disqualified": "st-dq", "No lead record": "st-none"}
 
 # Annual quotas and the date each one starts (per David, 2026-10-09). Quarterly quota = annual ÷ 4.
 # Before a rep's start date they're ramping: no quota, the row shows closed-won and pipeline only.
@@ -295,6 +300,28 @@ def owner_names(token, ids):
             out[oid] = f'{o.get("firstName") or ""} {o.get("lastName") or ""}'.strip() or o.get("email") or f"Owner {oid}"
         except requests.RequestException:
             out[oid] = f"Owner {oid}"
+    return out
+
+
+def lead_stages(token, contact_ids):
+    """{contact_id: stage label} from the contact's most recently created HubSpot Lead."""
+    links = assoc(token, "contacts", "leads", contact_ids)
+    lead_ids = list(dict.fromkeys(x for v in links.values() for x in v))
+    info = {}
+    for i in range(0, len(lead_ids), 100):
+        r = requests.post(f"{API}/crm/v3/objects/leads/batch/read",
+                          json={"properties": ["hs_pipeline_stage", "hs_createdate"],
+                                "inputs": [{"id": x} for x in lead_ids[i:i + 100]]},
+                          headers={"Authorization": f"Bearer {token}"}, timeout=30)
+        r.raise_for_status()
+        for d in r.json().get("results", []):
+            p = d["properties"]
+            info[str(d["id"])] = (p.get("hs_createdate") or "", LEAD_STAGES.get(p.get("hs_pipeline_stage"), "New"))
+    out = {}
+    for cid, ids in links.items():
+        mine = sorted((info[x] for x in ids if x in info), reverse=True)
+        if mine:
+            out[cid] = mine[0][1]
     return out
 
 
@@ -824,7 +851,7 @@ def merge_leads(sqls, frees, start):
     return list(leads.values())
 
 
-def render_leads(sqls, frees, owners, *, start, first_mon, week_labels, now_local, updated):
+def render_leads(sqls, frees, owners, stages=None, *, start, first_mon, week_labels, now_local, updated):
     tag = f'<section class="slide" data-dur="{SLIDE_SECONDS_LEADS}" data-key="leads" data-label="Leads">'
     head = (f'<header><h1><span>BCS</span> Inbound Leads · last {ROLLING_DAYS} days</h1>'
             f'<div class="meta">{start.strftime("%b %-d")} – {now_local.strftime("%b %-d")} · SQLs + freemium signups'
@@ -837,60 +864,89 @@ def render_leads(sqls, frees, owners, *, start, first_mon, week_labels, now_loca
     names.update(owners or {})
     others = {L["c"].get("hubspot_owner_id") for L in leads} - set(REPS) - {None, ""}
     order = list(REPS) + sorted(others, key=lambda o: names.get(o, o)) + [""]
+    owner_of = lambda L: L["c"].get("hubspot_owner_id") or ""
+    is_sql = lambda L: "SQL" in L["kinds"]
+    esc = html.escape
 
-    def cell(ls, cls=""):
-        if not ls:
-            return f'<div class="lc {cls} zero"><b>0</b></div>'
-        s = sum("SQL" in L["kinds"] for L in ls)
-        f = sum("Freemium" in L["kinds"] for L in ls)
-        return (f'<div class="lc {cls}"><b>{len(ls)}</b><small><i class="ks">{s} SQL</i> · '
-                f'<i class="kf">{f} Free</i></small></div>')
+    def legend(items):
+        return '<div class="lleg">' + "".join(f'<span><i class="{c}"></i>{t}</span>' for c, t in items) + "</div>"
 
-    wk = lambda L: (L["day"] - first_mon).days // 7
-    rows = []
-    for oid in order:
-        mine = [L for L in leads if (L["c"].get("hubspot_owner_id") or "") == oid]
-        if oid not in REPS and not mine:
-            continue
-        nm = names.get(oid, f"Owner {oid}") if oid else "Unassigned"
-        cls = "unassigned" if not oid else ("other" if oid not in REPS else "")
-        cells = "".join(cell([L for L in mine if wk(L) == i]) for i in range(n_weeks))
-        rows.append(f'<div class="lrow {cls}"><div class="name">{html.escape(nm)}</div>{cells}{cell(mine, "tot")}</div>')
-    team = "".join(cell([L for L in leads if wk(L) == i]) for i in range(n_weeks))
-    rows.append(f'<div class="lrow ltotals"><div class="name">Team</div>{team}{cell(leads, "tot")}</div>')
+    type_leg = legend([("k-sql", "SQL"), ("k-free", "Freemium")])
+
+    # ---- 1. Leads by type, per week (stacked columns: SQL at the base, Freemium on top)
     def rng(i):
         a = max(start, first_mon + timedelta(weeks=i))
         b = min(now_local.date(), first_mon + timedelta(weeks=i, days=6))
         if a == b:
             return a.strftime("%b %-d")
         return f'{a.strftime("%b %-d")}–{b.strftime("%-d" if a.month == b.month else "%b %-d")}'
-    hdr = ("".join(f'<div>{rng(i)}</div>' for i in range(n_weeks - 1)) +
-           f'<div class="cur">This week<br><span>{rng(n_weeks - 1)}</span></div>')
-    hdr = f'<div class="lrow lhead"><div></div>{hdr}<div class="htot">{ROLLING_DAYS} days</div></div>'
+    wk = lambda L: (L["day"] - first_mon).days // 7
+    weeks = []
+    for i in range(n_weeks):
+        ls = [L for L in leads if wk(L) == i]
+        s = sum(map(is_sql, ls)); weeks.append((rng(i), s, len(ls) - s))
+    wmax = max([s + f for _, s, f in weeks] + [1])
+    cols = []
+    for i, (lbl, s, f) in enumerate(weeks):
+        cur = " cur" if i == n_weeks - 1 else ""
+        tot = s + f
+        seg = lambda n, cls: (f'<i class="{cls}" style="flex:{n} 0 0">{n if n / wmax >= .12 else ""}</i>' if n else "")
+        cols.append(f'<div class="wcol{cur}" title="{lbl}: {s} SQL, {f} freemium"><div class="wplot"><b>{tot}</b>'
+                    f'<div class="wstack" style="height:{tot / wmax * 88:.2f}%">{seg(f, "k-free")}{seg(s, "k-sql")}</div></div>'
+                    f'<span>{"This week" if cur else lbl}</span></div>')
+    c1 = (f'<div class="lcard"><div class="lct"><h2>Leads by type · per week</h2>{type_leg}</div>'
+          f'<div class="wchart">{"".join(cols)}</div></div>')
 
-    latest = sorted(leads, key=lambda L: L["t"] or datetime.min.replace(tzinfo=TZ), reverse=True)[:LEADS_LATEST]
-    items = []
-    for L in latest:
-        c = L["c"]
-        who = f'{c.get("firstname") or ""} {c.get("lastname") or ""}'.strip() or c.get("email") or "Unknown"
-        oid = c.get("hubspot_owner_id") or ""
-        pills = "".join(f'<em class="{"ks" if k == "SQL" else "kf"}">{k}</em>' for k in sorted(L["kinds"], reverse=True))
-        rep = html.escape(names.get(oid, "Owner")) if oid else "Unassigned"
-        items.append(f'<div class="li{" un" if not oid else ""}"><span class="ld">{L["day"].strftime("%b %-d")}</span>'
-                     f'<span class="lw"><b>{html.escape(who)}</b><small>{html.escape((c.get("company") or "").strip())}</small></span>'
-                     f'<span class="lp">{pills}</span><span class="lo">{rep}</span></div>')
-    lat = (f'<div class="llatest"><div class="lk">Latest leads</div>'
-           f'<div class="lgrid">{"".join(items) or "<div class=none>No leads yet</div>"}</div></div>')
-    s = sum("SQL" in L["kinds"] for L in leads)
-    f = sum("Freemium" in L["kinds"] for L in leads)
-    un = sum(1 for L in leads if not L["c"].get("hubspot_owner_id"))
+    # ---- 2. Leads by rep (horizontal stacked bars, shared scale)
+    rows = []
+    for oid in order:
+        mine = [L for L in leads if owner_of(L) == oid]
+        if oid not in REPS and not mine:
+            continue
+        rows.append((oid, names.get(oid, f"Owner {oid}") if oid else "Unassigned", mine))
+    rmax = max([len(m) for *_, m in rows] + [1])
+    bars = []
+    for oid, nm, mine in rows:
+        s = sum(map(is_sql, mine)); f = len(mine) - s
+        seg = lambda n, cls: (f'<i class="{cls}" style="width:{n / rmax * 100:.2f}%">{n if n / rmax >= .08 else ""}</i>' if n else "")
+        un = " un" if not oid else ""
+        bars.append(f'<div class="hrow{un}" title="{esc(nm)}: {s} SQL, {f} freemium"><span class="hn">{esc(nm)}</span>'
+                    f'<div class="hbar">{seg(s, "k-sql")}{seg(f, "k-free")}</div><b>{len(mine)}</b></div>')
+    c2 = (f'<div class="lcard"><div class="lct"><h2>Leads by rep</h2>{type_leg}</div>'
+          f'<div class="hchart">{"".join(bars)}</div></div>')
+
+    # ---- 3. Lead status by rep (100% bars: share of that rep's leads in each Leads-pipeline stage)
+    stage_leg = legend([(LEAD_STAGE_CLS[k], k) for k in LEAD_STAGE_ORDER])
+    if stages is None:
+        body3 = '<div class="none">Lead status needs the HubSpot key to have Leads read access (crm.objects.leads.read).</div>'
+    else:
+        srows = []
+        for oid, nm, mine in rows:
+            n = len(mine)
+            cnt = {k: 0 for k in LEAD_STAGE_ORDER}
+            for L in mine:
+                cnt[stages.get(str(L["c"].get("hs_object_id")), "No lead record")] += 1
+            if not n:
+                bar = '<div class="sbar empty">no leads</div>'
+            else:
+                segs = "".join(f'<i class="{LEAD_STAGE_CLS[k]}" style="width:{v / n * 100:.2f}%">'
+                               f'{v if v / n >= .07 else ""}</i>' for k, v in cnt.items() if v)
+                bar = f'<div class="sbar">{segs}</div>'
+            worked = cnt["Connected"] + cnt["Qualified"]
+            tip = ", ".join(f"{v} {k}" for k, v in cnt.items() if v) or "no leads"
+            un = " un" if not oid else ""
+            srows.append(f'<div class="srow{un}" title="{esc(nm)}: {tip}"><span class="hn">{esc(nm)}</span>{bar}'
+                         f'<span class="sn"><b>{n}</b>{f" · {round(worked / n * 100)}% connected+" if n else ""}</span></div>')
+        body3 = f'<div class="schart">{"".join(srows)}</div>'
+    c3 = (f'<div class="lcard wide"><div class="lct"><h2>Lead status by rep · share of each rep\'s leads</h2>{stage_leg}</div>'
+          f'{body3}</div>')
+
+    s = sum(map(is_sql, leads)); un = sum(1 for L in leads if not owner_of(L))
     unb = f' · <b class="bad">{un} unassigned</b>' if un else ""
-    foot = (f'<footer><div>{plural(len(leads), "lead")} · {s} SQL · {f} freemium{unb}'
-            f' · each contact counted once, in the week it first came in</div>'
-            f'<div>Rolling {ROLLING_DAYS} days · weeks start Monday</div></footer>')
-    cols = f"minmax(0,1.5fr) repeat({n_weeks + 1},minmax(0,1fr))"
-    return (tag + head + f'<div class="leads" style="--lcols:{cols}">{hdr}<div class="lrows">{"".join(rows)}</div></div>'
-            + lat + foot + "</section>")
+    foot = (f'<footer><div>{plural(len(leads), "lead")} · {s} SQL · {len(leads) - s} freemium{unb}'
+            f' · each contact counted once, in the week it first came in · status = stage of the contact\'s latest HubSpot Lead'
+            f' · connected+ = connected or qualified</div><div>Weeks start Monday</div></footer>')
+    return tag + head + f'<div class="lcharts">{c1}{c2}</div>{c3}' + foot + "</section>"
 
 
 # ---------------------------------------------------------------- main
@@ -938,7 +994,7 @@ def build(data, now_local):
     newdeals = render_new_deals(data.get("deals"), now_local, updated, data.get("latest_deal"))
     quota = render_quota(data.get("won"), data.get("open_deals"), now_local, updated)
     wins = render_wins(data.get("won"), now_local, updated)
-    leads = render_leads(data.get("lead_sql"), data.get("lead_free"), data.get("lead_owners"),
+    leads = render_leads(data.get("lead_sql"), data.get("lead_free"), data.get("lead_owners"), data.get("lead_stages"),
                          start=start, first_mon=first_mon, week_labels=week_labels, now_local=now_local, updated=updated)
     page = (tpl.replace("{{SLIDES}}", weekly + rolling + leads + newdeals + wins + quota + reps)
                .replace("{{GEN}}", str(int(now_local.timestamp()))))
@@ -963,6 +1019,7 @@ def main():
         data.setdefault("meeting_class", None); data.setdefault("excluded_calls", [])
         data.setdefault("won", None); data.setdefault("latest_deal", None)
         data.setdefault("lead_sql", None); data.setdefault("lead_free", None); data.setdefault("lead_owners", {})
+        data.setdefault("lead_stages", None)
     else:
         token = os.environ.get("HUBSPOT_TOKEN")
         if not token:
@@ -971,6 +1028,13 @@ def main():
         data["latest_deal"] = latest_deal(token)
         others = {c.get("hubspot_owner_id") for c in (data["lead_sql"] or []) + (data["lead_free"] or [])}
         data["lead_owners"] = owner_names(token, sorted(o for o in others if o and o not in REPS))
+        try:
+            ids = [str(c["hs_object_id"]) for c in (data["lead_sql"] or []) + (data["lead_free"] or []) if c.get("hs_object_id")]
+            data["lead_stages"] = lead_stages(token, ids)
+            print("lead stages:", json.dumps({k: list(data["lead_stages"].values()).count(k) for k in LEAD_STAGE_ORDER}), file=sys.stderr)
+        except requests.HTTPError as e:
+            print(f"WARN: leads object query failed ({e.response.status_code})", file=sys.stderr)
+            data["lead_stages"] = None
         data["excluded_calls"] = calls_on_live_deals(token, [c for c in data["calls"]
                                                              if c.get("hs_call_direction") != "INBOUND"])
         data["meeting_class"] = classify_meetings(token, [m for m in data["meetings"] if is_prospect_meeting(m)])
