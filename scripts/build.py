@@ -929,16 +929,16 @@ def render_leads(sqls, frees, owners, stages=None, *, start, first_mon, week_lab
             if not n:
                 bar = '<div class="sbar empty">no leads</div>'
             else:
-                segs = "".join(f'<i class="{LEAD_STAGE_CLS[k]}" style="width:{v / n * 100:.2f}%">'
-                               f'{v if v / n >= .07 else ""}</i>' for k, v in cnt.items() if v)
-                bar = f'<div class="sbar">{segs}</div>'
+                segs = "".join(f'<i class="{LEAD_STAGE_CLS[k]}" style="flex:{v} 0 0">'
+                               f'{v if v / rmax >= .05 else ""}</i>' for k, v in cnt.items() if v)
+                bar = f'<div class="strack"><div class="sbar" style="width:{n / rmax * 100:.2f}%">{segs}</div></div>'
             worked = cnt["Connected"] + cnt["Qualified"]
             tip = ", ".join(f"{v} {k}" for k, v in cnt.items() if v) or "no leads"
             un = " un" if not oid else ""
             srows.append(f'<div class="srow{un}" title="{esc(nm)}: {tip}"><span class="hn">{esc(nm)}</span>{bar}'
                          f'<span class="sn"><b>{n}</b>{f" · {round(worked / n * 100)}% connected+" if n else ""}</span></div>')
         body3 = f'<div class="schart">{"".join(srows)}</div>'
-    c3 = (f'<div class="lcard wide"><div class="lct"><h2>Lead status by rep · share of each rep\'s leads</h2>{stage_leg}</div>'
+    c3 = (f'<div class="lcard wide"><div class="lct"><h2>Lead status by rep</h2>{stage_leg}</div>'
           f'{body3}</div>')
 
     s = sum(map(is_sql, leads)); un = sum(1 for L in leads if not owner_of(L))
