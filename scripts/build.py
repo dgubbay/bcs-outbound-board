@@ -36,7 +36,11 @@ CONNECTED = "f240bbac-87c9-4f6e-bf70-924b57d47db7"
 REAL_CONNECT_MIN_MS = 120_000   # 2 min — screens out gatekeepers / hang-ups / short voicemails
 REAL_CONNECT_MAX_MS = 900_000   # 15 min — longer = scheduled demo, not a cold-call connect
 DIALS_PER_DAY = 60              # 300 / week
-MEETINGS_PER_WEEK = 4
+MEETINGS_PER_WEEK = 5          # default outbound-meeting target per rep per week (SMB team)
+# Per-rep overrides (per David, 2026-10-27): Mid-Market/Enterprise reps carry a lower outbound target.
+MEETING_TARGETS = {"99808544": 2.5,   # Thomas Gubbay
+                   "135846867": 2.5}  # Rick Smith
+FREEMIUM_STAGE = "94805561"    # BCS custom lifecycle stage "Freemium"
 MEETING_EXCLUDE = ("interview", "round", "role discussion", "training", "test", "hold:",
                    "internal", "1:1", "1 on 1")
 ROLLING_DAYS = 30
@@ -238,26 +242,28 @@ EXISTING_TYPES = {"Follow-up Demo", "Proposal Review", "Follow up Call", "Follow
 
 
 def sql_contacts(token, ids):
-    """Contacts that are, or have ever been, Sales Qualified Leads (lifecycle stage)."""
+    """Inbound contacts: lifecycle stage is, or has ever been, Sales Qualified Lead or Freemium."""
     out = set()
     ids = list(dict.fromkeys(ids))
     for i in range(0, len(ids), 100):
         r = requests.post(f"{API}/crm/v3/objects/contacts/batch/read",
-                          json={"properties": ["lifecyclestage", "hs_v2_date_entered_salesqualifiedlead"],
+                          json={"properties": ["lifecyclestage", "hs_v2_date_entered_salesqualifiedlead",
+                                               f"hs_v2_date_entered_{FREEMIUM_STAGE}"],
                                 "inputs": [{"id": x} for x in ids[i:i + 100]]},
                           headers={"Authorization": f"Bearer {token}"}, timeout=30)
         r.raise_for_status()
         for c in r.json().get("results", []):
             p = c["properties"]
-            if p.get("lifecyclestage") == "salesqualifiedlead" or p.get("hs_v2_date_entered_salesqualifiedlead"):
+            if (p.get("lifecyclestage") in ("salesqualifiedlead", FREEMIUM_STAGE)
+                    or p.get("hs_v2_date_entered_salesqualifiedlead") or p.get(f"hs_v2_date_entered_{FREEMIUM_STAGE}")):
                 out.add(str(c["id"]))
     return out
 
 
 def classify_meetings(token, meetings):
     """meeting id → "existing" (a deal already existed with that contact/company when it was booked),
-    "inbound" (a contact on the meeting is, or has been, an SQL — per David, 2026-10-20; how the
-    contact was created doesn't matter), "new" (outbound prospect meeting) or
+    "inbound" (a contact on the meeting is, or has been, an SQL or Freemium lifecycle stage — per David,
+    2026-10-20 / 2026-10-27; how the contact was created doesn't matter), "new" (outbound prospect meeting) or
     "unlinked" (no contact/company to check).
     Returns None if the key lacks the deals/companies scopes."""
     ids = [m["hs_object_id"] for m in meetings if m.get("hs_object_id")]
@@ -394,7 +400,7 @@ def compute(data, start: date, buckets, bucket_of):
         return day is not None and day >= start
 
     nones = {k: data.get(k) is None for k in ("deals", "sqls", "freemiums")}
-    rows = {oid: {"name": n, "bars": [0] * buckets, "dials": 0, "talk_ms": 0, "connects": 0,
+    rows = {oid: {"oid": oid, "name": n, "bars": [0] * buckets, "dials": 0, "talk_ms": 0, "connects": 0,
                   "meetings": 0, "mtg_existing": 0, "mtg_inbound": 0, "mtg_unlinked": 0, "deal_amt": 0.0, "deal_calls": 0,
                   "deals": None if nones["deals"] else 0,
                   "sqls": None if nones["sqls"] else 0,
@@ -480,8 +486,6 @@ def plural(n, word):
 # ---------------------------------------------------------------- outbound board slide
 def mtg_note(r, base):
     extra = []
-    if r["mtg_inbound"]:
-        extra.append(f"+{r['mtg_inbound']} SQL")
     if r["mtg_existing"]:
         extra.append(f"+{r['mtg_existing']} on deals")
     if r["mtg_unlinked"]:
@@ -489,8 +493,17 @@ def mtg_note(r, base):
     return base + ("<br>" + " · ".join(extra) if extra else "")
 
 
-def render_board(rows, *, classified=True, filtered=True, key, label, dur, title, period, labels, current_idx, dial_target, mtg_target,
-                 mtg_label, updated):
+def mtg_goal(oid):
+    return MEETING_TARGETS.get(oid, MEETINGS_PER_WEEK)
+
+
+def fmt_n(x):
+    return f"{x:.1f}".rstrip("0").rstrip(".")
+
+
+def render_board(rows, *, classified=True, filtered=True, key, label, dur, title, period, labels, current_idx, dial_target,
+                 mtg_scale, weekly, updated):
+    """mtg_scale = business days elapsed ÷ 5; each rep's outbound-meeting target = their weekly goal × mtg_scale."""
     peak = max([1] + [v for r in rows for v in r["bars"]])
     trs = []
     for r in rows:
@@ -509,7 +522,8 @@ def render_board(rows, *, classified=True, filtered=True, key, label, dur, title
     <div class="total {pace_class(r['dials'], dial_target)}"><b>{r['dials']}</b><small>pace target {dial_target}</small></div></div>
   <div class="metric"><b>{hm(r['talk_ms'])}</b><small>talk time</small></div>
   <div class="metric"><b>{pct}%</b><small>{plural(r['connects'], 'connect')}</small></div>
-  <div class="metric {pace_class(r['meetings'], mtg_target)}"><b>{r['meetings']}</b><small>{mtg_note(r, mtg_label)}</small></div>
+  <div class="metric {pace_class(r['meetings'], mtg_goal(r['oid']) * mtg_scale)}"><b>{r['meetings']}</b><small>{mtg_note(r, f"of {fmt_n(mtg_goal(r['oid']))} / wk" if weekly else f"target {fmt_n(round(mtg_goal(r['oid']) * mtg_scale * 2) / 2)}")}</small></div>
+  <div class="metric"><b>{r['mtg_inbound'] if classified else '—'}</b><small>SQL / freemium</small></div>
   <div class="metric pipe"><b>{num(r['deals'])}</b><small>{money(r['deal_amt']) if r['deals'] else 'no new deals'}</small></div>
   <div class="metric inb"><b>{num(r['sqls'])}</b><small>SQLs</small></div>
   <div class="metric inb"><b>{num(r['freemiums'])}</b><small>freemiums</small></div>
@@ -519,22 +533,23 @@ def render_board(rows, *, classified=True, filtered=True, key, label, dur, title
     return f"""<section class="slide" data-dur="{dur}" data-key="{key}" data-label="{label}">
 <header><h1><span>BCS</span> {title}</h1>
   <div class="meta">{period} · updated <b>{updated}</b> MT</div></header>
-<div class="grid head"><div>Rep</div><div>Dials · total</div><div>Talk time</div><div>Connect rate</div><div>{'Prospect mtgs' if classified else 'Meetings booked'}</div><div class="hpipe">New deals</div><div class="hinb">SQLs routed</div><div class="hinb">Freemiums routed</div></div>
+<div class="grid head"><div>Rep</div><div>Dials · total</div><div>Talk time</div><div>Connect rate</div><div>{'Outbound mtgs' if classified else 'Meetings booked'}</div><div>Inbound mtgs</div><div class="hpipe">New deals</div><div class="hinb">SQLs routed</div><div class="hinb">Freemiums routed</div></div>
 <div class="rows">{''.join(trs)}
   <div class="row totals">
     <div class="name">TEAM</div>
     <div class="metric"><b>{td}</b><small>dials</small></div>
     <div class="metric"><b>{hm(sum(r['talk_ms'] for r in rows))}</b><small>talk time</small></div>
     <div class="metric"><b>{round(100 * tc / td) if td else 0}%</b><small>connect rate</small></div>
-    <div class="metric"><b>{sum(r['meetings'] for r in rows)}</b><small>{'prospect mtgs' if classified else 'meetings'}</small></div>
+    <div class="metric"><b>{sum(r['meetings'] for r in rows)}</b><small>{'outbound mtgs' if classified else 'meetings'}</small></div>
+    <div class="metric"><b>{sum(r['mtg_inbound'] for r in rows) if classified else '—'}</b><small>inbound mtgs</small></div>
     <div class="metric pipe"><b>{num(tot(rows, 'deals'))}</b><small>{money(sum(r['deal_amt'] for r in rows))}</small></div>
     <div class="metric inb"><b>{num(tot(rows, 'sqls'))}</b><small>SQLs</small></div>
     <div class="metric inb"><b>{num(tot(rows, 'freemiums'))}</b><small>freemiums</small></div>
   </div>
 </div>
 <footer>
-  <div>Connect = outbound call of 2–15 min (outcome tag ignored) · Talk time = minutes on those calls · {'Prospect mtg = contact not an SQL, no deal yet' if classified else 'Prospect-vs-deal meeting split needs deals + companies read access'} · Deals created · SQLs & freemiums by owner</div>
-  <div>{f"Excludes {plural(sum(r['deal_calls'] for r in rows), 'call')} to open deals & existing clients" if filtered else "Target 60 dials/day · 4 mtgs/wk"}</div>
+  <div>Connect = outbound call of 2–15 min (outcome tag ignored) · Talk time = minutes on those calls · {'Outbound mtg = no contact is/was SQL or Freemium, no deal yet · Inbound mtg = an SQL/Freemium contact' if classified else 'Prospect-vs-deal meeting split needs deals + companies read access'} · Deals created · SQLs & freemiums by owner</div>
+  <div>{f"Excludes {plural(sum(r['deal_calls'] for r in rows), 'call')} to open deals & existing clients" if filtered else "Target 60 dials/day"}</div>
 </footer>
 </section>"""
 
@@ -929,8 +944,7 @@ def build(data, now_local):
         week_rows, classified=classified, filtered=filtered, key="board", label="This week", dur=SLIDE_SECONDS_BOARD, title="Outbound Board",
         period=f"Week of {monday.strftime('%b %-d')}", labels=["M", "T", "W", "T", "F"],
         current_idx=today.weekday() if today.weekday() < 5 else None,
-        dial_target=round(DIALS_PER_DAY * wk_days), mtg_target=MEETINGS_PER_WEEK * wk_days / 5,
-        mtg_label=f"of {MEETINGS_PER_WEEK} / wk", updated=updated)
+        dial_target=round(DIALS_PER_DAY * wk_days), mtg_scale=wk_days / 5, weekly=True, updated=updated)
 
     # Rolling 30 days: today and the 29 days before it, bars per Monday-start week
     start = today - timedelta(days=ROLLING_DAYS - 1)
@@ -940,13 +954,11 @@ def build(data, now_local):
     week_labels[0] = max(start, first_mon).strftime("%b %-d")  # partial first week starts on `start`
     r30 = compute(data, start, n_weeks, lambda d: (d - first_mon).days // 7)
     d30 = business_days(start, now_local)
-    m30 = MEETINGS_PER_WEEK * d30 / 5
     rolling = render_board(
         r30, classified=classified, filtered=filtered, key="30d", label="30 days", dur=SLIDE_SECONDS_30D, title="30-Day Outbound Board",
         period=f"{start.strftime('%b %-d')} – {today.strftime('%b %-d')} · bars by week",
         labels=week_labels, current_idx=n_weeks - 1,
-        dial_target=round(DIALS_PER_DAY * d30), mtg_target=m30,
-        mtg_label=f"target {round(m30)}", updated=updated)
+        dial_target=round(DIALS_PER_DAY * d30), mtg_scale=d30 / 5, weekly=False, updated=updated)
 
     qs, qe, qn = quarter_bounds(today)
     nqs, nqe, nqn = quarter_bounds(qe)
