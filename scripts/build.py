@@ -76,6 +76,8 @@ CLOSED_STAGES = {
 SLIDE_SECONDS_NEWDEALS = 25
 SLIDE_SECONDS_QUOTA = 20
 SLIDE_SECONDS_LEADS = 25
+SLIDE_SECONDS_OBM = 25
+OBM_MAX_CARDS = 12
 # HubSpot Leads object pipeline (default "Lead pipeline"): stage id → label, in funnel order.
 LEAD_STAGES = {"new-stage-id": "New", "attempting-stage-id": "Attempting", "connected-stage-id": "Connected",
                "qualified-stage-id": "Qualified", "unqualified-stage-id": "Disqualified"}
@@ -928,6 +930,113 @@ def render_leads(lead_rows, owners, *, start, first_mon, week_labels, now_local,
     return tag + head + f'<div class="lcharts">{c1}{c2}</div>{c3}' + foot + "</section>"
 
 
+def meeting_people(token, mids):
+    """{meeting_id: {"contacts": [(name, title)], "company": str}} for the given meetings."""
+    mids = list(dict.fromkeys(mids))
+    if not mids:
+        return {}
+    m2c = assoc(token, "meetings", "contacts", mids)
+    m2co = assoc(token, "meetings", "companies", mids)
+
+    def batch(obj, ids, props):
+        out = {}
+        ids = list(dict.fromkeys(ids))
+        for i in range(0, len(ids), 100):
+            r = requests.post(f"{API}/crm/v3/objects/{obj}/batch/read",
+                              json={"properties": props, "inputs": [{"id": x} for x in ids[i:i + 100]]},
+                              headers={"Authorization": f"Bearer {token}"}, timeout=30)
+            r.raise_for_status()
+            for o in r.json().get("results", []):
+                out[str(o["id"])] = o["properties"]
+        return out
+
+    contacts = batch("contacts", [c for v in m2c.values() for c in v], ["firstname", "lastname", "email", "jobtitle", "company"])
+    companies = batch("companies", [c for v in m2co.values() for c in v], ["name"])
+    out = {}
+    for mid in mids:
+        people, co = [], ""
+        for cid in m2c.get(mid, []):
+            p = contacts.get(cid) or {}
+            nm = f'{p.get("firstname") or ""} {p.get("lastname") or ""}'.strip() or p.get("email") or ""
+            if nm:
+                people.append((nm, (p.get("jobtitle") or "").strip()))
+            co = co or (p.get("company") or "").strip()
+        for coid in m2co.get(mid, []):
+            if (companies.get(coid) or {}).get("name"):
+                co = companies[coid]["name"].strip()
+                break
+        out[mid] = {"contacts": people, "company": co}
+    return out
+
+
+def week_outbound_meetings(data, monday):
+    """This week's outbound prospect meetings (same rule as the board's Outbound mtgs column), newest booked first."""
+    mclass = data.get("meeting_class")
+    out = []
+    for m in data.get("meetings") or []:
+        if m.get("hubspot_owner_id") not in REPS or not is_prospect_meeting(m):
+            continue
+        d = local_day(m.get("hs_createdate"))
+        if not d or d < monday:
+            continue
+        kind = "new" if mclass is None else mclass.get(m.get("hs_object_id"), "unlinked")
+        if kind == "new":
+            out.append(m)
+    return sorted(out, key=lambda m: ts(m.get("hs_createdate")), reverse=True)
+
+
+def render_outbound_mtgs(mtgs, details, *, monday, now_local, updated):
+    tag = (f'<section class="slide celebrate obm" data-dur="{SLIDE_SECONDS_OBM}" data-key="outbound" '
+           f'data-label="Outbound meetings">')
+    head = (f'<header><h1><span>BCS</span> Outbound Meetings Booked</h1>'
+            f'<div class="meta">Week of {monday.strftime("%b %-d")} · updated <b>{updated}</b> MT</div></header>')
+    details = details or {}
+    # Per-rep tally vs weekly target
+    chips = []
+    for oid, nm in REPS.items():
+        n = sum(1 for m in mtgs if m.get("hubspot_owner_id") == oid)
+        goal = mtg_goal(oid)
+        hit = " hit" if n >= goal else ""
+        chips.append(f'<div class="obchip{hit}"><span>{html.escape(nm.split()[0])}</span><b>{n}</b>'
+                     f'<small>of {fmt_n(goal)}</small></div>')
+    team_goal = sum(mtg_goal(o) for o in REPS)
+    tally = (f'<div class="obtally"><div class="obbig"><b>{len(mtgs)}</b><small>{"outbound meeting" if len(mtgs) == 1 else "outbound meetings"} booked this week'
+             f'<i>team goal {fmt_n(team_goal)}</i></small></div><div class="obchips">{"".join(chips)}</div></div>')
+    if not mtgs:
+        return (tag + head + tally + '<div class="empty"><b>First outbound meeting of the week goes here</b>'
+                '<small>Book one and it shows up on this screen.</small></div>' + obm_foot(updated) + "</section>")
+    shown = mtgs[:OBM_MAX_CARDS]
+    cards = []
+    for i, m in enumerate(shown):
+        mid = m.get("hs_object_id")
+        det = details.get(mid) or {}
+        people = det.get("contacts") or []
+        who = people[0][0] if people else (m.get("hs_meeting_title") or "Prospect meeting").strip()
+        more = f' +{len(people) - 1}' if len(people) > 1 else ""
+        title = people[0][1] if people else ""
+        co = det.get("company") or ""
+        sub = " · ".join(x for x in (title, co) if x)
+        booked = ts(m.get("hs_createdate"))
+        start = ts(m.get("hs_meeting_start_time"))
+        when = f'meets {start.astimezone(TZ).strftime("%a %b %-d · %-I:%M %p")}' if start else ""
+        new = " fresh" if i == 0 else ""
+        cards.append(f'''<div class="obcard{new}"><div class="obrep">{html.escape(REPS.get(m.get("hubspot_owner_id"), ""))}</div>
+  <div class="obwho">{html.escape(who)}<em>{more}</em></div>
+  <div class="obsub">{html.escape(sub) or "&nbsp;"}</div>
+  <div class="obmt">{html.escape((m.get("hs_meeting_title") or "").strip())}</div>
+  <div class="obwhen"><span>booked {ago(booked, now_local) if booked else ""}</span><span>{when}</span></div></div>''')
+    extra = (f'<div class="obmore">+{len(mtgs) - len(shown)} more this week</div>' if len(mtgs) > len(shown) else "")
+    size = "lg" if len(shown) <= 4 else "md" if len(shown) <= 9 else "sm"
+    return (tag + confetti(60, seed=11) + head + tally +
+            f'<div class="obgrid {size}">{"".join(cards)}</div>{extra}' + obm_foot(updated) + "</section>")
+
+
+def obm_foot(updated):
+    return ('<footer><div>Meetings booked this week with outbound prospects: no contact is/was SQL or Freemium, '
+            'no deal on the contact or company when booked · newest first</div>'
+            f'<div>Goals: SMB 5/wk · Mid-Market/Enterprise 2.5/wk</div></footer>')
+
+
 # ---------------------------------------------------------------- main
 def build(data, now_local):
     updated = now_local.strftime("%-I:%M %p")
@@ -972,7 +1081,9 @@ def build(data, now_local):
     wins = render_wins(data.get("won"), now_local, updated)
     leads = render_leads(data.get("lead_objs"), data.get("lead_owners"),
                          start=start, first_mon=first_mon, week_labels=week_labels, now_local=now_local, updated=updated)
-    page = (tpl.replace("{{SLIDES}}", weekly + rolling + leads + newdeals + wins + quota + reps)
+    obm = render_outbound_mtgs(week_outbound_meetings(data, monday), data.get("outbound_details"),
+                               monday=monday, now_local=now_local, updated=updated)
+    page = (tpl.replace("{{SLIDES}}", weekly + rolling + leads + obm + newdeals + wins + quota + reps)
                .replace("{{GEN}}", str(int(now_local.timestamp()))))
     summary = {k: (None if v is None else len(v)) for k, v in data.items()}
     summary["week"] = [{k: r[k] for k in ("name", "dials", "deal_calls", "connects", "meetings", "mtg_existing", "mtg_inbound", "mtg_unlinked", "deals", "sqls", "freemiums")}
@@ -994,6 +1105,7 @@ def main():
         data.setdefault("meeting_class", None); data.setdefault("excluded_calls", [])
         data.setdefault("won", None); data.setdefault("latest_deal", None)
         data.setdefault("lead_objs", None); data.setdefault("lead_owners", {})
+        data.setdefault("outbound_details", {})
     else:
         token = os.environ.get("HUBSPOT_TOKEN")
         if not token:
@@ -1005,6 +1117,13 @@ def main():
         data["excluded_calls"] = calls_on_live_deals(token, [c for c in data["calls"]
                                                              if c.get("hs_call_direction") != "INBOUND"])
         data["meeting_class"] = classify_meetings(token, [m for m in data["meetings"] if is_prospect_meeting(m)])
+        try:
+            monday = now_local.date() - timedelta(days=now_local.weekday())
+            data["outbound_details"] = meeting_people(
+                token, [m["hs_object_id"] for m in week_outbound_meetings(data, monday) if m.get("hs_object_id")])
+        except requests.HTTPError as e:
+            print(f"WARN: outbound meeting details unavailable ({e.response.status_code})", file=sys.stderr)
+            data["outbound_details"] = {}
     page, summary = build(data, now_local)
     out = Path("dist")
     out.mkdir(exist_ok=True)

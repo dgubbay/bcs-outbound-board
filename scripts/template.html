@@ -206,6 +206,35 @@
   .sbar.empty{align-items:center;color:var(--mute);font-size:1.6vh;padding-left:.4vw}
   .sn{font-size:1.6vh;color:var(--mute);white-space:nowrap} .sn b{font-size:2.4vh;color:var(--ink);margin-right:.2vw}
   footer b.bad{color:var(--bad)}
+  /* Outbound meetings celebration */
+  .obm{background:radial-gradient(circle at 50% 30%,#1d4a6e 0%,#1b1858 50%,#161041 85%)}
+  .obm header,.obm footer,.obtally,.obgrid,.obmore,.obm .empty{position:relative;z-index:1} .obm .confetti{z-index:0;opacity:.55}
+  .obtally{display:flex;align-items:center;justify-content:space-between;gap:2vw}
+  .obbig{display:flex;align-items:baseline;gap:1.2vw}
+  .obbig b{font-size:11vh;font-weight:900;line-height:1;color:var(--teal);text-shadow:0 0 3vh rgba(0,183,209,.45)}
+  .obbig small{font-size:2.6vh;color:var(--ink);font-weight:700;margin:0;line-height:1.3}
+  .obbig small i{display:block;font-style:normal;font-size:2vh;color:var(--mute);font-weight:600}
+  .obchips{display:flex;gap:.8vw}
+  .obchip{background:rgba(33,26,92,.85);border:.2vh solid var(--line);border-radius:1.2vh;padding:.8vh 1vw;display:flex;flex-direction:column;align-items:center;min-width:7vw}
+  .obchip span{font-size:1.6vh;color:var(--mute);font-weight:700}
+  .obchip b{font-size:4vh;font-weight:800;line-height:1.1}
+  .obchip small{margin:0;font-size:1.4vh}
+  .obchip.hit{border-color:#FDE14B;box-shadow:0 0 2vh rgba(253,225,75,.35)} .obchip.hit b{color:#FDE14B}
+  .obgrid{flex:1;display:grid;gap:1.4vh 1.2vw;align-content:start;min-height:0}
+  .obgrid.lg{grid-template-columns:repeat(2,minmax(0,1fr))} .obgrid.md{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .obgrid.sm{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .obcard{background:rgba(33,26,92,.88);border:.2vh solid rgba(0,183,209,.45);border-left:.6vh solid var(--teal);border-radius:1.2vh;padding:1.3vh 1.2vw;display:flex;flex-direction:column;gap:.4vh;min-width:0}
+  .obcard.fresh{border-color:#FDE14B;border-left-color:#FDE14B;box-shadow:0 0 2.5vh rgba(253,225,75,.3)}
+  .obrep{font-size:1.7vh;color:var(--pink);font-weight:800;text-transform:uppercase;letter-spacing:.08em}
+  .obwho{font-size:3vh;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .obwho em{font-style:normal;color:var(--mute);font-size:2vh;margin-left:.4vw}
+  .obsub{font-size:1.9vh;color:var(--teal);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .obmt{font-size:1.6vh;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .obwhen{display:flex;justify-content:space-between;gap:1vw;font-size:1.5vh;color:var(--mute);margin-top:.3vh}
+  .obwhen span:last-child{color:var(--ink);font-weight:700}
+  .obgrid.lg .obwho{font-size:4.2vh} .obgrid.lg .obsub{font-size:2.4vh} .obgrid.lg .obmt,.obgrid.lg .obwhen{font-size:1.9vh}
+  .obgrid.sm .obwho{font-size:2.4vh} .obgrid.sm .obsub{font-size:1.6vh}
+  .obmore{text-align:center;font-size:2vh;color:var(--teal);font-weight:700}
 </style>
 </head>
 <body>
