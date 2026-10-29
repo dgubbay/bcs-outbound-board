@@ -1,6 +1,6 @@
 # BCS Outbound Board
 
-The TV page rotates: **Weekly Outbound Board (30s) → 30-Day Outbound Board (20s) → Inbound leads (25s) → New opportunities: latest one on top + rolling 7 days by rep (25s) → Closed-won celebration (20s) → Quota attainment (20s) → This-quarter pipeline (25s) → Next-quarter pipeline (25s)**. Arrow keys step through pages, space pauses. Add `#board`, `#30d`, `#leads`, `#newdeals`, `#wins`, `#quota`, `#thisq` or `#nextq` to the URL to pin one page.
+The TV page rotates: **Weekly Outbound Board (30s) → 30-Day Outbound Board (20s) → Leads (25s) → Outbound meetings booked this week (25s) → New opportunities: latest one on top + rolling 7 days by rep (25s) → Closed-won celebration (20s) → Quota attainment (20s) → This-quarter pipeline (25s) → Next-quarter pipeline (25s)**. Arrow keys step through pages, space pauses. Add `#board`, `#30d`, `#leads`, `#outbound`, `#newdeals`, `#wins`, `#quota`, `#thisq` or `#nextq` to the URL to pin one page.
 
 **Leads page:** HubSpot **Lead records** (Leads object) created in the last 30 days, by **lead owner** (roster reps, other HubSpot users, and **Unassigned** in red). Three charts: **leads by type per week** (Lead Type: SQL, Freemium, Re-engaged, Upsell, Re-attempting; Monday-start weeks), **leads by rep** (stacked by Lead Type, shared scale), and **lead status by rep** (bar length = lead count, split by Lead pipeline stage New → Attempting → Connected → Qualified, plus Disqualified) with "% connected+" (connected or qualified). Needs `crm.objects.leads.read` on the service key. Chart palettes were checked for color-blind separation on the dark panel.
 
@@ -36,6 +36,9 @@ Open the Pages URL in the TV browser, full screen. Turn off the TV's screensaver
 | Freemiums routed | Contacts owned by the rep whose Freemium Sign Up Date is this week. |
 
 Service key scopes needed: `crm.objects.contacts.read`, `crm.objects.owners.read`, `crm.objects.deals.read`, `crm.objects.companies.read`. If a scope is missing that column shows "—" instead of breaking the board.
+
+## Outbound meetings page
+Celebrates every **outbound** meeting booked this week (Mon–now, by booked date), newest first, using the same rule as the board's Outbound mtgs column. Each card shows the rep, the prospect (name, title, company), the meeting title, when it was booked and when it meets. A tally per rep vs weekly goal sits at the top (gold when the goal is hit). Up to 12 cards; extras show as "+N more".
 
 ## Outbound vs inbound meetings
 **Outbound mtgs** (colored vs target): none of the meeting's contacts or companies had a deal (any stage) when it was booked, AND no contact on it is, or has ever been, in the **SQL or Freemium** lifecycle stage. Weekly targets (`MEETING_TARGETS` in `scripts/build.py`): Rick and Thomas 2.5/wk; everyone else (SMB team) 5/wk; prorated by business days elapsed, ×30-day business days on the 30-day board. **Inbound mtgs** (own column, not color-coded): a contact on the meeting is/was SQL or Freemium. Meetings with an existing deal show as "+N on deals"; meetings with no linked contact/company fall back to the meeting type (Discovery Demo = new) and otherwise show as "unlinked". Without deals + companies read access, the board shows all meetings instead.
