@@ -40,7 +40,19 @@ MEETINGS_PER_WEEK = 5          # default outbound-meeting target per rep per wee
 # Per-rep overrides (per David, 2026-10-27): Mid-Market/Enterprise reps carry a lower outbound target.
 MEETING_TARGETS = {"99808544": 2.5,   # Thomas Gubbay
                    "135846867": 2.5}  # Rick Smith
-FREEMIUM_STAGE = "94805561"    # BCS custom lifecycle stage "Freemium"
+FREEMIUM_STAGE = "94805561"
+# Internal / test contacts: never count as a prospect on a meeting.
+INTERNAL_DOMAINS = ("getbcs.com", "bcsaudit.com")
+INTERNAL_EMAILS = ("thomasgubbay@gmail.com", "djp.gubbay@gmail.com")
+
+
+def is_internal_email(e):
+    e = (e or "").strip().lower()
+    if not e:
+        return False
+    local, _, dom = e.rpartition("@")
+    base = local.split("+")[0] + "@" + dom
+    return dom in INTERNAL_DOMAINS or e in INTERNAL_EMAILS or base in INTERNAL_EMAILS    # BCS custom lifecycle stage "Freemium"
 MEETING_EXCLUDE = ("interview", "round", "role discussion", "training", "test", "hold:",
                    "internal", "1:1", "1 on 1")
 ROLLING_DAYS = 30
@@ -244,22 +256,25 @@ EXISTING_TYPES = {"Follow-up Demo", "Proposal Review", "Follow up Call", "Follow
 
 
 def sql_contacts(token, ids):
-    """Inbound contacts: lifecycle stage is, or has ever been, Sales Qualified Lead or Freemium."""
-    out = set()
+    """(inbound, internal): inbound = lifecycle stage is, or has ever been, SQL or Freemium;
+    internal = BCS staff / test contacts (see INTERNAL_DOMAINS)."""
+    out, internal = set(), set()
     ids = list(dict.fromkeys(ids))
     for i in range(0, len(ids), 100):
         r = requests.post(f"{API}/crm/v3/objects/contacts/batch/read",
-                          json={"properties": ["lifecyclestage", "hs_v2_date_entered_salesqualifiedlead",
+                          json={"properties": ["lifecyclestage", "email", "hs_v2_date_entered_salesqualifiedlead",
                                                f"hs_v2_date_entered_{FREEMIUM_STAGE}"],
                                 "inputs": [{"id": x} for x in ids[i:i + 100]]},
                           headers={"Authorization": f"Bearer {token}"}, timeout=30)
         r.raise_for_status()
         for c in r.json().get("results", []):
             p = c["properties"]
+            if is_internal_email(p.get("email")):
+                internal.add(str(c["id"]))
             if (p.get("lifecyclestage") in ("salesqualifiedlead", FREEMIUM_STAGE)
                     or p.get("hs_v2_date_entered_salesqualifiedlead") or p.get(f"hs_v2_date_entered_{FREEMIUM_STAGE}")):
                 out.add(str(c["id"]))
-    return out
+    return out, internal
 
 
 def classify_meetings(token, meetings):
@@ -279,7 +294,7 @@ def classify_meetings(token, meetings):
         c2d = assoc(token, "contacts", "deals", contacts) if contacts else {}
         co2d = assoc(token, "companies", "deals", companies) if companies else {}
         created = deal_createdates(token, {d for v in list(c2d.values()) + list(co2d.values()) for d in v})
-        sqls = sql_contacts(token, contacts) if contacts else set()
+        sqls, internal = sql_contacts(token, contacts) if contacts else (set(), set())
     except requests.HTTPError as e:
         print(f"WARN: meeting classification unavailable ({e.response.status_code})", file=sys.stderr)
         return None
@@ -294,7 +309,11 @@ def classify_meetings(token, meetings):
             continue
         deals = {d for c in cs for d in c2d.get(c, [])} | {d for c in cos for d in co2d.get(c, [])}
         prior = [d for d in deals if created.get(d) and booked and ts(created[d]) < booked]
-        inbound = any(c in sqls for c in cs)
+        ext = [c for c in cs if c not in internal]
+        if cs and not ext:
+            out[mid] = "internal"      # only BCS staff / test contacts on it: not a prospect meeting
+            continue
+        inbound = any(c in sqls for c in ext)
         out[mid] = "existing" if prior else "inbound" if inbound else "new"
     return out
 
@@ -434,7 +453,7 @@ def compute(data, start: date, buckets, bucket_of):
                 r["mtg_existing"] += 1
             elif kind == "inbound":
                 r["mtg_inbound"] += 1
-            else:
+            elif kind != "internal":
                 r["mtg_unlinked"] += 1
     for d in data.get("deals") or []:
         r = rows.get(d.get("hubspot_owner_id"))
@@ -958,7 +977,7 @@ def meeting_people(token, mids):
         for cid in m2c.get(mid, []):
             p = contacts.get(cid) or {}
             nm = f'{p.get("firstname") or ""} {p.get("lastname") or ""}'.strip() or p.get("email") or ""
-            if nm:
+            if nm and not is_internal_email(p.get("email")):
                 people.append((nm, (p.get("jobtitle") or "").strip()))
             co = co or (p.get("company") or "").strip()
         for coid in m2co.get(mid, []):
