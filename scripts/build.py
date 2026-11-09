@@ -541,7 +541,7 @@ def render_board(rows, *, classified=True, filtered=True, key, label, dur, title
   <div class="name">{html.escape(r['name'])}</div>
   <div class="dials"><div class="bars">{''.join(bars)}</div>
     <div class="total {pace_class(r['dials'], dial_target)}"><b>{r['dials']}</b><small>pace target {dial_target}</small></div></div>
-  <div class="metric"><b>{hm(r['talk_ms'])}</b><small>talk time</small></div>
+  <div class="metric talk"><b>{hm(r['talk_ms'])}</b><small>talk time</small></div>
   <div class="metric"><b>{pct}%</b><small>{plural(r['connects'], 'connect')}</small></div>
   <div class="metric {pace_class(r['meetings'], mtg_goal(r['oid']) * mtg_scale)}"><b>{r['meetings']}</b><small>{mtg_note(r, f"of {fmt_n(mtg_goal(r['oid']))} / wk" if weekly else f"target {fmt_n(round(mtg_goal(r['oid']) * mtg_scale * 2) / 2)}")}</small></div>
   <div class="metric"><b>{r['mtg_inbound'] if classified else '—'}</b><small>SQL / freemium</small></div>
@@ -559,7 +559,7 @@ def render_board(rows, *, classified=True, filtered=True, key, label, dur, title
   <div class="row totals">
     <div class="name">TEAM</div>
     <div class="metric"><b>{td}</b><small>dials</small></div>
-    <div class="metric"><b>{hm(sum(r['talk_ms'] for r in rows))}</b><small>talk time</small></div>
+    <div class="metric talk"><b>{hm(sum(r['talk_ms'] for r in rows))}</b><small>talk time</small></div>
     <div class="metric"><b>{round(100 * tc / td) if td else 0}%</b><small>connect rate</small></div>
     <div class="metric"><b>{sum(r['meetings'] for r in rows)}</b><small>{'outbound mtgs' if classified else 'meetings'}</small></div>
     <div class="metric"><b>{sum(r['mtg_inbound'] for r in rows) if classified else '—'}</b><small>inbound mtgs</small></div>
