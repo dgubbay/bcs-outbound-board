@@ -33,8 +33,7 @@ REPS = {
 }
 
 CONNECTED = "f240bbac-87c9-4f6e-bf70-924b57d47db7"
-REAL_CONNECT_MIN_MS = 300_000   # 5 min — screens out gatekeepers / hang-ups / voicemails (per David, 2026-11-17)
-REAL_CONNECT_MAX_MS = 1_200_000 # 20 min — longer = scheduled demo, not a cold-call connect
+REAL_CONNECT_MIN_MS = 300_000   # connect = outbound call LONGER than 5 min, no upper limit (per David, 2026-11-17)
 DIALS_PER_DAY = 60              # 300 / week
 MEETINGS_PER_WEEK = 5          # default outbound-meeting target per rep per week (SMB team)
 # Per-rep overrides (per David, 2026-10-27): Mid-Market/Enterprise reps carry a lower outbound target.
@@ -438,9 +437,9 @@ def compute(data, start: date, buckets, bucket_of):
             r["bars"][b] += 1
         r["dials"] += 1
         dur = int(float(c.get("hs_call_duration") or 0))
-        # Connect = any outbound call of 5–20 minutes (per David, 2026-11-17) — the HubSpot outcome tag
+        # Connect = any outbound call longer than 5 minutes, no cap (per David, 2026-11-17) — the HubSpot outcome tag
         # is ignored. Calls to contacts on open deals were already skipped above.
-        if REAL_CONNECT_MIN_MS <= dur <= REAL_CONNECT_MAX_MS:
+        if dur > REAL_CONNECT_MIN_MS:
             r["connects"] += 1
             r["talk_ms"] += dur
     for m in data["meetings"]:
@@ -569,7 +568,7 @@ def render_board(rows, *, classified=True, filtered=True, key, label, dur, title
   </div>
 </div>
 <footer>
-  <div>Connect = outbound call of 5–20 min (outcome tag ignored) · Talk time = minutes on those calls · {'Outbound mtg = no contact is/was SQL or Freemium, no deal yet · Inbound mtg = an SQL/Freemium contact' if classified else 'Prospect-vs-deal meeting split needs deals + companies read access'} · Deals created · SQLs & freemiums by owner</div>
+  <div>Connect = outbound call over 5 min (outcome tag ignored) · Talk time = minutes on those calls · {'Outbound mtg = no contact is/was SQL or Freemium, no deal yet · Inbound mtg = an SQL/Freemium contact' if classified else 'Prospect-vs-deal meeting split needs deals + companies read access'} · Deals created · SQLs & freemiums by owner</div>
   <div>{f"Excludes {plural(sum(r['deal_calls'] for r in rows), 'call')} to open deals & existing clients" if filtered else "Target 60 dials/day"}</div>
 </footer>
 </section>"""
