@@ -987,12 +987,16 @@ def meeting_people(token, mids):
     return out
 
 
+OBM_EXCLUDE_OWNERS = {"14324253"}   # David Gubbay: left off the Outbound Meetings page (per David, 2026-11-19)
+
+
 def week_outbound_meetings(data, monday):
     """This week's outbound prospect meetings (same rule as the board's Outbound mtgs column), newest booked first."""
     mclass = data.get("meeting_class")
     out = []
     for m in data.get("meetings") or []:
-        if m.get("hubspot_owner_id") not in REPS or not is_prospect_meeting(m):
+        if m.get("hubspot_owner_id") not in REPS or m.get("hubspot_owner_id") in OBM_EXCLUDE_OWNERS \
+                or not is_prospect_meeting(m):
             continue
         d = local_day(m.get("hs_createdate"))
         if not d or d < monday:
@@ -1012,12 +1016,14 @@ def render_outbound_mtgs(mtgs, details, *, monday, now_local, updated):
     # Per-rep tally vs weekly target
     chips = []
     for oid, nm in REPS.items():
+        if oid in OBM_EXCLUDE_OWNERS:
+            continue
         n = sum(1 for m in mtgs if m.get("hubspot_owner_id") == oid)
         goal = mtg_goal(oid)
         hit = " hit" if n >= goal else ""
         chips.append(f'<div class="obchip{hit}"><span>{html.escape(nm.split()[0])}</span><b>{n}</b>'
                      f'<small>of {fmt_n(goal)}</small></div>')
-    team_goal = sum(mtg_goal(o) for o in REPS)
+    team_goal = sum(mtg_goal(o) for o in REPS if o not in OBM_EXCLUDE_OWNERS)
     tally = (f'<div class="obtally"><div class="obbig"><b>{len(mtgs)}</b><small>{"outbound meeting" if len(mtgs) == 1 else "outbound meetings"} booked this week'
              f'<i>team goal {fmt_n(team_goal)}</i></small></div><div class="obchips">{"".join(chips)}</div></div>')
     if not mtgs:
